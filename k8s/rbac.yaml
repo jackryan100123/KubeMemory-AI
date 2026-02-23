@@ -1,0 +1,36 @@
+# ServiceAccount + ClusterRole + ClusterRoleBinding for KubeMemory watcher.
+# Least-privilege: only pods (get, list, watch), events (get, list, watch), namespaces (get, list).
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kubememory-watcher
+  namespace: default
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubememory-watcher
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kubememory-watcher
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kubememory-watcher
+subjects:
+  - kind: ServiceAccount
+    name: kubememory-watcher
+    namespace: default

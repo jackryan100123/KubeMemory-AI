@@ -1,0 +1,249 @@
+# KubeMemory — Cursor AI Skills & Rules File
+# ============================================================
+# Drop this file in your project root as `.cursorrules` or
+# reference it in Cursor's "Rules for AI" settings.
+# This is the single source of truth for how Cursor should
+# behave across the ENTIRE project.
+# ============================================================
+
+## PROJECT IDENTITY
+You are building **KubeMemory** — a persistent AI brain for Kubernetes clusters.
+- Backend: Django 4.2 + DRF + Django Channels + Celery
+- Frontend: React 18 + Vite + TailwindCSS + Zustand + React Query
+- AI Layer: LangGraph + LangChain + Ollama (local LLM, zero cloud cost)
+- Memory: ChromaDB (vector) + Neo4j Community (graph)
+- MCP: Python MCP SDK (Claude Desktop integration)
+- Infra: Docker multi-stage builds, Kind (local K8s), Redis
+
+## HARD RULES — NEVER VIOLATE THESE
+
+### Security
+- NEVER hardcode any secret, key, password, token, or credential in any file
+- ALL secrets go in `.env` files. NEVER in `settings.py`, `docker-compose.yml`, or source code
+- ALL `.env` files MUST be in `.gitignore` — verify this every time you touch `.gitignore`
+- Use `os.environ.get("KEY", None)` pattern — NEVER `os.environ["KEY"]` (fails on missing)
+- Docker images MUST use build args for any build-time config — runtime secrets via env_file
+- Multi-stage Docker builds ONLY — never ship dev dependencies in production images
+- RBAC manifests must use least-privilege service accounts for the K8s watcher
+
+### Code Quality
+- Every Python function must have type hints
+- Every Python module must have a module-level docstring
+- Django models must have `__str__` methods and `Meta` classes with `ordering`
+- DRF serializers must validate all fields explicitly — no implicit `ModelSerializer` magic
+- React components: functional only, no class components
+- All API calls must go through `/frontend/src/api/` — never fetch directly in components
+- Custom hooks live in `/frontend/src/hooks/` — never inline complex logic in components
+- Zustand store: one store file per domain (incidents, patterns, ui)
+
+### Docker & Containerization
+- Backend Dockerfile: 3 stages (deps → builder → runtime)
+- Frontend Dockerfile: 2 stages (builder → nginx)
+- NO `root` user in production containers — always create and use non-root user
+- Pin ALL base image versions (e.g. `python:3.11-slim-bookworm` not `python:latest`)
+- Use `.dockerignore` in every service directory
+- Health checks MUST be defined in every service in `docker-compose.yml`
+- Volumes for persistent data: Neo4j data, ChromaDB data, Ollama models
+
+### Django Patterns
+- Use `django-environ` for settings — settings.py reads from `.env` via `env()`
+- Separate settings files: `settings/base.py`, `settings/dev.py`, `settings/prod.py`
+- All Django apps must be in `backend/apps/` subdirectory
+- Celery tasks: always use `bind=True` and handle exceptions with retry logic
+- Django Channels: use Redis channel layer — never in-memory in production
+- Database: Postgres via `psycopg2-binary` — never SQLite in containerized setup
+
+### React Patterns  
+- Use React Query for ALL server state — never useState for API data
+- Use Zustand for client-only state (UI state, WebSocket messages buffer)
+- API base URL from `import.meta.env.VITE_API_URL` — never hardcoded
+- WebSocket URL from `import.meta.env.VITE_WS_URL` — never hardcoded
+- All environment variables must be prefixed with `VITE_` for frontend
+- TailwindCSS only — no inline styles, no CSS modules, no styled-components
+
+### LangGraph / AI Patterns
+- Ollama base URL from environment: `OLLAMA_BASE_URL`
+- ChromaDB persist directory from environment: `CHROMA_PERSIST_DIR`
+- Neo4j URI, user, password all from environment
+- LangGraph agents must be stateless — all state passed via `AgentState` TypedDict
+- Every agent function must handle exceptions and return partial state on failure
+- Embeddings model configurable via `OLLAMA_EMBED_MODEL` env var
+- Chat model configurable via `OLLAMA_CHAT_MODEL` env var
+
+## FILE STRUCTURE — ALWAYS MAINTAIN THIS
+
+```
+kubememory/
+├── .cursorrules              ← this file (copy of SKILLS.md)
+├── .gitignore
+├── .env.example              ← committed, no real values
+├── docker-compose.yml        ← dev compose
+├── docker-compose.prod.yml   ← prod compose
+├── Makefile                  ← developer shortcuts
+├── README.md
+│
+├── backend/
+│   ├── Dockerfile            ← multi-stage
+│   ├── .dockerignore
+│   ├── requirements/
+│   │   ├── base.txt
+│   │   ├── dev.txt
+│   │   └── prod.txt
+│   ├── manage.py
+│   ├── config/               ← Django project config
+│   │   ├── settings/
+│   │   │   ├── base.py
+│   │   │   ├── dev.py
+│   │   │   └── prod.py
+│   │   ├── urls.py
+│   │   ├── asgi.py
+│   │   └── celery.py
+│   └── apps/
+│       ├── incidents/        ← incident CRUD + API
+│       ├── memory/           ← ChromaDB + Neo4j layer
+│       ├── agents/           ← LangGraph pipeline
+│       ├── watcher/          ← K8s event watcher
+│       ├── mcp_server/       ← MCP protocol server
+│       └── ws/               ← WebSocket consumers
+│
+├── frontend/
+│   ├── Dockerfile            ← multi-stage (build + nginx)
+│   ├── .dockerignore
+│   ├── nginx.conf
+│   ├── .env.example
+│   ├── package.json
+│   ├── vite.config.js
+│   ├── tailwind.config.js
+│   └── src/
+│       ├── api/
+│       ├── components/
+│       ├── hooks/
+│       ├── pages/
+│       ├── store/
+│       └── main.jsx
+│
+└── k8s/
+    ├── kind-cluster.yaml
+    ├── rbac.yaml
+    ├── serviceaccount.yaml
+    └── test-workloads/
+```
+
+## WHEN GENERATING CODE — ALWAYS DO THESE
+
+1. **Before writing any Django view** → check if a serializer exists for that model first
+2. **Before writing any React component** → check if a hook exists for that data
+3. **Before writing any Celery task** → ensure the task is registered in `config/celery.py`
+4. **Before writing any agent** → define the `AgentState` TypedDict first
+5. **After writing any new service** → add health check to `docker-compose.yml`
+6. **After writing any new env var** → add it to `.env.example` with a comment
+7. **After any new Python dependency** → add to appropriate `requirements/*.txt`
+8. **After any new npm package** → verify it's saved in `package.json`
+
+## NAMING CONVENTIONS
+
+| Context | Convention | Example |
+|---------|-----------|---------|
+| Python files | snake_case | `graph_builder.py` |
+| Python classes | PascalCase | `KubeGraphBuilder` |
+| Python functions | snake_case | `find_causal_patterns()` |
+| Django models | PascalCase singular | `Incident`, `Fix` |
+| Django apps | snake_case | `incidents`, `memory` |
+| React components | PascalCase | `IncidentCard.jsx` |
+| React hooks | camelCase prefixed use | `useWebSocket.js` |
+| CSS classes | Tailwind utilities only | `className="flex gap-4"` |
+| Env vars | SCREAMING_SNAKE_CASE | `OLLAMA_BASE_URL` |
+| Docker services | kebab-case | `django-api`, `celery-worker` |
+
+## ERROR HANDLING PATTERNS
+
+### Django
+```python
+# Always use DRF exception handling
+from rest_framework.exceptions import ValidationError, NotFound
+from rest_framework.response import Response
+from rest_framework import status
+
+# In views — never bare except
+try:
+    result = some_operation()
+except SpecificException as e:
+    return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+```
+
+### Celery Tasks
+```python
+@app.task(bind=True, max_retries=3, default_retry_delay=60)
+def process_incident(self, incident_id: int):
+    try:
+        ...
+    except Exception as exc:
+        raise self.retry(exc=exc)
+```
+
+### LangGraph Agents
+```python
+def agent_fn(state: AgentState) -> AgentState:
+    try:
+        ...
+    except Exception as e:
+        state["errors"] = state.get("errors", []) + [str(e)]
+        return state  # always return state, never raise
+```
+
+### React / API
+```javascript
+// Always use React Query's error handling
+const { data, error, isLoading } = useQuery({
+  queryKey: ['incidents'],
+  queryFn: fetchIncidents,
+  retry: 2,
+  onError: (err) => toast.error(err.message)
+})
+```
+
+## DOCKER BUILD RULES
+
+### Backend Multi-Stage Pattern
+```dockerfile
+# Stage 1: dependency resolver
+FROM python:3.11-slim-bookworm AS deps
+WORKDIR /deps
+COPY requirements/base.txt requirements/prod.txt ./
+RUN pip install --no-cache-dir -r prod.txt --target /install
+
+# Stage 2: builder (compile any C extensions)
+FROM python:3.11-slim-bookworm AS builder
+COPY --from=deps /install /install
+
+# Stage 3: runtime (minimal image)
+FROM python:3.11-slim-bookworm AS runtime
+RUN groupadd -r appuser && useradd -r -g appuser appuser
+COPY --from=builder /install /usr/local/lib/python3.11/site-packages
+WORKDIR /app
+COPY . .
+RUN chown -R appuser:appuser /app
+USER appuser
+```
+
+### Frontend Multi-Stage Pattern
+```dockerfile
+# Stage 1: Node builder
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production
+COPY . .
+RUN npm run build
+
+# Stage 2: Nginx runtime
+FROM nginx:1.25-alpine AS runtime
+COPY --from=builder /app/dist /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+EXPOSE 80
+```
+
+## PHASE AWARENESS
+When working on a specific phase, ONLY touch files relevant to that phase.
+Do not implement features from future phases — follow the phase plan strictly.
+At the end of each phase, all tests must pass and docker-compose up must succeed.

@@ -1,0 +1,1 @@
+"""Kubernetes event watcher."""

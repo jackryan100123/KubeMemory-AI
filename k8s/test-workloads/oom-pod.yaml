@@ -1,0 +1,16 @@
+# This pod exceeds memory limits to trigger OOMKill
+apiVersion: v1
+kind: Pod
+metadata:
+  name: test-oom
+  namespace: default
+spec:
+  containers:
+  - name: memory-hog
+    image: python:3.11-slim
+    command: ["python", "-c", "x = ' ' * 10**9"]
+    resources:
+      limits:
+        memory: "64Mi"
+      requests:
+        memory: "32Mi"
