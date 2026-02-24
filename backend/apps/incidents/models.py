@@ -41,6 +41,7 @@ class Incident(models.Model):
     neo4j_id = models.CharField(max_length=255, blank=True)
     occurred_at = models.DateTimeField(db_index=True)
     resolved_at = models.DateTimeField(null=True, blank=True)
+    estimated_waste_usd = models.FloatField(default=0.0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

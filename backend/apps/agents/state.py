@@ -2,7 +2,7 @@
 LangGraph agent state definition.
 All state is passed through the pipeline — agents are stateless functions.
 """
-from typing import List, Optional, TypedDict
+from typing import List, NotRequired, Optional, TypedDict
 
 
 class AgentState(TypedDict):
@@ -37,3 +37,6 @@ class AgentState(TypedDict):
     # PIPELINE META
     errors: List[str]
     processing_time_ms: int
+
+    # RUNBOOK (optional, set by runbook_agent)
+    runbook_md: NotRequired[str]

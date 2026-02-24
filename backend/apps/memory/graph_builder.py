@@ -232,6 +232,7 @@ class KubeGraphBuilder:
         Each link: {source, target, relationship}.
         """
         with self._driver.session() as session:
+            # No WHERE in Cypher (Neo4j 5 syntax); nulls filtered in Python below
             result = session.run(
                 """
                 MATCH (p:Pod {namespace: $namespace})
@@ -240,7 +241,6 @@ class KubeGraphBuilder:
                 OPTIONAL MATCH (i)-[:RESOLVED_BY]->(f:Fix)
                 WITH collect(DISTINCT p) + collect(DISTINCT svc) + collect(DISTINCT i) + collect(DISTINCT f) AS node_list
                 UNWIND node_list AS n
-                WHERE n IS NOT NULL
                 RETURN DISTINCT n
                 """,
                 namespace=namespace,
@@ -270,16 +270,17 @@ class KubeGraphBuilder:
                 if node_type == "Incident":
                     node_entry["severity"] = props.get("severity", "")
                     node_entry["resolved"] = props.get("resolved", False)
+                    node_entry["db_id"] = props.get("db_id")
                 nodes_out.append(node_entry)
 
-            # Links: relationships in same namespace scope
+            # Links: relationships in same namespace scope (Neo4j 5: no pattern inside WHERE, use UNION of simpler MATCHes)
             links_result = session.run(
                 """
                 MATCH (a)-[r]->(b)
                 WHERE (a:Pod AND a.namespace = $namespace)
                    OR (b:Pod AND b.namespace = $namespace)
-                   OR (a:Incident AND (a)-[:AFFECTED]->(p:Pod {namespace: $namespace}))
-                   OR (b:Incident AND (b)-[:AFFECTED]->(p:Pod {namespace: $namespace}))
+                   OR (a:Incident AND EXISTS { (a)-[:AFFECTED]->(p:Pod {namespace: $namespace}) })
+                   OR (b:Incident AND EXISTS { (b)-[:AFFECTED]->(p:Pod {namespace: $namespace}) })
                 RETURN elementId(a) AS source, elementId(b) AS target, type(r) AS relationship
                 LIMIT 1000
                 """,

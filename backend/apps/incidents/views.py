@@ -29,7 +29,19 @@ class IncidentViewSet(viewsets.ModelViewSet):
         return context
 
     def get_queryset(self):
-        return Incident.objects.all().order_by("-occurred_at")
+        qs = Incident.objects.all().order_by("-occurred_at")
+        if self.action != "list":
+            return qs
+        status_param = self.request.query_params.get("status")
+        if status_param:
+            qs = qs.filter(status=status_param)
+        occurred_after = self.request.query_params.get("occurred_after")
+        if occurred_after:
+            from django.utils.dateparse import parse_datetime
+            dt = parse_datetime(occurred_after)
+            if dt:
+                qs = qs.filter(occurred_at__gte=dt)
+        return qs
 
     def partial_update(self, request, *args, **kwargs):
         """Allow partial update (e.g. status only)."""

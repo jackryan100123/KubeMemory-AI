@@ -13,6 +13,20 @@ from .serializers import IncidentListSerializer
 logger = logging.getLogger(__name__)
 
 
+def estimate_waste_usd(incident_data: dict) -> float:
+    """
+    Rough monthly cost of a repeatedly crashing pod.
+    Based on: restarts * avg engineer time (30min) * $100/hr
+    + wasted compute (requests * restart_count * 0.001 USD/hr * 730 hrs/month).
+    """
+    restarts = int(incident_data.get("restart_count", 0) or 0)
+    if restarts <= 0:
+        restarts = 1
+    engineer_cost = restarts * 0.5 * 100
+    compute_waste = restarts * 0.001 * 730
+    return round(engineer_cost + compute_waste, 2)
+
+
 @shared_task(bind=True, max_retries=3, default_retry_delay=30)
 def ingest_incident_task(self, incident_data: dict) -> dict[str, Any]:
     """
@@ -50,6 +64,7 @@ def ingest_incident_task(self, incident_data: dict) -> dict[str, Any]:
             "status": Incident.Status.OPEN,
             "description": incident_data.get("description", ""),
             "raw_logs": incident_data.get("raw_logs", ""),
+            "estimated_waste_usd": estimate_waste_usd(incident_data),
         }
 
         incident, created = Incident.objects.get_or_create(

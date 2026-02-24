@@ -1,7 +1,12 @@
 import axios from 'axios'
 
+// When built in Docker, .env is not available — use same origin so nginx can proxy /api to backend
+const apiBase =
+  import.meta.env.VITE_API_URL ||
+  (typeof window !== 'undefined' ? `${window.location.origin}/api` : '/api')
+
 const client = axios.create({
-  baseURL: import.meta.env.VITE_API_URL,
+  baseURL: apiBase,
   headers: { 'Content-Type': 'application/json' },
   timeout: 30000,
 })

@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payment-service
+  namespace: production
+  labels:
+    app: payment-service
+    team: payments
+    cost-center: eng-payments
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: payment-service
+  template:
+    metadata:
+      labels:
+        app: payment-service
+    spec:
+      containers:
+      - name: payment-service
+        image: busybox:1.36
+        command:
+          - /bin/sh
+          - -c
+          - |
+            echo "payment-service starting..."
+            echo "Connecting to database..."
+            sleep 60
+            echo "ERROR: database connection timeout after 60s"
+            echo "FATAL: payment-service crashed - connection pool exhausted"
+            exit 1
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "100m"
+          limits:
+            memory: "128Mi"
+            cpu: "200m"
+        livenessProbe:
+          exec:
+            command: ["/bin/sh", "-c", "[ -f /tmp/healthy ] || exit 1"]
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command: ["/bin/sh", "-c", "exit 0"]
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      restartPolicy: Always
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: payment-service
+  namespace: production
+spec:
+  selector:
+    app: payment-service
+  ports:
+    - port: 8080
+      targetPort: 8080

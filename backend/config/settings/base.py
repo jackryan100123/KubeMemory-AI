@@ -30,6 +30,7 @@ INSTALLED_APPS = [
     "apps.agents",
     "apps.watcher",
     "apps.mcp_server",
+    "apps.clusters",
     "apps.ws",
 ]
 
@@ -38,6 +39,7 @@ MIDDLEWARE = [
     "django.contrib.sessions.middleware.SessionMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.common.CommonMiddleware",
+    "config.middleware.DisableCSRFForAPI",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
@@ -78,6 +80,11 @@ CELERY_RESULT_BACKEND = env("CELERY_RESULT_BACKEND", default="redis://localhost:
 CORS_ALLOWED_ORIGINS = env.list(
     "CORS_ALLOWED_ORIGINS",
     default=["http://localhost:5173", "http://localhost:3000"],
+)
+# Required for POST from frontend on 5173 (Django 4+ origin check)
+CSRF_TRUSTED_ORIGINS = env.list(
+    "CSRF_TRUSTED_ORIGINS",
+    default=["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173"],
 )
 
 REST_FRAMEWORK = {

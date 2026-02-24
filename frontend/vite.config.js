@@ -8,8 +8,8 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 5173,
       proxy: {
-        '/api': { target: env.VITE_API_URL || 'http://localhost:8000', changeOrigin: true },
-        '/ws': { target: env.VITE_WS_URL || 'ws://localhost:8000', ws: true, changeOrigin: true }
+        '/api': { target: env.VITE_API_URL?.replace(/\/api\/?$/, '') || 'http://localhost:8000', changeOrigin: true },
+        '/ws': { target: env.VITE_WS_URL?.replace(/^wss?:\/\//, 'http://').replace(/\/ws\/?$/, '') || 'http://localhost:8000', ws: true, changeOrigin: true },
       }
     }
   }

@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ml-data-worker
+  namespace: data-pipeline
+  labels:
+    app: ml-data-worker
+    team: data
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ml-data-worker
+  template:
+    metadata:
+      labels:
+        app: ml-data-worker
+    spec:
+      containers:
+      - name: worker
+        image: busybox:1.36
+        command: ["/bin/sh", "-c", "echo 'processing...'; sleep 3600"]
+        resources:
+          requests:
+            memory: "8Gi"
+            cpu: "4"
+          limits:
+            memory: "16Gi"
+            cpu: "8"

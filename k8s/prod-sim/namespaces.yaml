@@ -1,0 +1,31 @@
+# Simulates a real microservices company with 3 environments
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: production
+  labels:
+    env: production
+    team: platform
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: staging
+  labels:
+    env: staging
+    team: platform
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  labels:
+    env: infra
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: data-pipeline
+  labels:
+    env: production
+    team: data

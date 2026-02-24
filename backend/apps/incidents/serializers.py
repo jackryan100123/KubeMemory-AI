@@ -49,6 +49,7 @@ class IncidentListSerializer(serializers.ModelSerializer):
             "description",
             "occurred_at",
             "resolved_at",
+            "estimated_waste_usd",
             "created_at",
         ]
 
@@ -76,6 +77,7 @@ class IncidentDetailSerializer(serializers.ModelSerializer):
             "neo4j_id",
             "occurred_at",
             "resolved_at",
+            "estimated_waste_usd",
             "created_at",
             "updated_at",
             "fixes",
