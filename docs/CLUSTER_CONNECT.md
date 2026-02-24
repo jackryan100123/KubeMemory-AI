@@ -38,22 +38,29 @@ K8S_NAMESPACES=production,staging,data-pipeline
 
 **If you run the app in Docker** (e.g. `docker compose up` and `make watcher`), the watcher runs *inside* the `django-api` container and cannot see your host `~/.kube/config`. Do this instead:
 
-1. **Create a kubeconfig the container can use** (from your project root, same machine where Kind runs):
+1. **Use a Kind cluster that exposes the API server on all interfaces** (required on Linux so the container can reach it via `host.docker.internal`). The prod-sim config `k8s/prod-sim/kind-cluster.yaml` already sets `networking.apiServerAddress: "0.0.0.0"` and `apiServerPort: 6443`. If you created the cluster *before* this was added, delete and recreate:
+
+   ```bash
+   kind delete cluster --name kubememory-prod-sim
+   cd k8s/prod-sim && ./bootstrap.sh
+   ```
+
+2. **Create a kubeconfig the container can use** (from your project root, same machine where Kind runs):
 
    ```bash
    kind get kubeconfig --name kubememory-prod-sim | sed 's/127\.0\.0\.1/host.docker.internal/g' > kubeconfig
    ```
 
-   (Use your actual Kind cluster name if different, e.g. `kubememory` for `k8s/kind-cluster.yaml`.)
+   (Use your actual Kind cluster name if different, e.g. `kubememory` for `k8s/kind-cluster.yaml`. With prod-sim the API server will be on port 6443.)
 
-2. **Restart the stack** so the `django-api` container gets the mounted kubeconfig and `host.docker.internal`:
+3. **Restart the stack** so the `django-api` container gets the mounted kubeconfig and `host.docker.internal`:
 
    ```bash
    docker compose down
    docker compose up -d
    ```
 
-3. **Start the watcher** (runs inside the container; it will use `/app/.kube/config`):
+4. **Start the watcher** (runs inside the container; it will use `/app/.kube/config`):
 
    ```bash
    make watcher
@@ -159,6 +166,7 @@ make verify-memory
 | Error | Fix |
 |-------|-----|
 | `Invalid kube-config file. No configuration found` | Watcher is running in Docker and has no kubeconfig. Create `kubeconfig` in project root: `kind get kubeconfig --name <cluster-name> \| sed 's/127\.0\.0\.1/host.docker.internal/g' > kubeconfig`, then `docker compose up -d` and `make watcher`. |
+| `Connection refused` to `host.docker.internal` (e.g. port 34083) | On Linux, Kind’s API server is bound to 127.0.0.1 by default, so the container cannot reach it. Recreate the cluster with the prod-sim config that sets `networking.apiServerAddress: "0.0.0.0"` (see Option A step 3), then regenerate `kubeconfig` and restart compose. |
 | `connection refused at 6443` | Docker not running or cluster stopped. Run `kind get clusters` |
 | `Forbidden: pods is forbidden` | RBAC not applied. Run `kubectl apply -f k8s/rbac.yaml` |
 | `no such file: ~/.kube/config` | Kubeconfig missing. Run the appropriate cloud CLI command above |
