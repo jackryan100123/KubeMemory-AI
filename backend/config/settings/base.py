@@ -30,6 +30,7 @@ INSTALLED_APPS = [
     "apps.agents",
     "apps.watcher",
     "apps.mcp_server",
+    "apps.chat",
     "apps.clusters",
     "apps.ws",
 ]

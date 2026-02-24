@@ -10,13 +10,16 @@ export function useWebSocket() {
   const { addLiveIncident, setWsConnected } = useIncidentStore()
 
   const connect = useCallback(() => {
-    // When built in Docker, use same origin so nginx can proxy /ws to backend
-    const wsBase =
+    // When built in Docker, use same origin so nginx can proxy /ws to backend.
+    // Strip trailing /ws so we never get .../ws/ws/incidents/
+    const raw =
       import.meta.env.VITE_WS_URL ||
       (typeof window !== 'undefined'
         ? `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`
         : 'ws://localhost:8000')
-    const url = wsBase + '/ws/incidents/'
+    const base = typeof raw === 'string' ? raw.replace(/\/ws\/?$/, '') : raw
+    const path = 'ws/incidents/'
+    const url = base ? `${base}${base.endsWith('/') ? '' : '/'}${path}` : `/${path}`
     ws.current = new WebSocket(url)
 
     ws.current.onopen = () => {

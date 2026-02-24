@@ -8,6 +8,7 @@ import GraphExplorer from './pages/GraphExplorer'
 import Patterns from './pages/Patterns'
 import ClusterConnect from './pages/ClusterConnect'
 import RiskCheck from './pages/RiskCheck'
+import Chat from './pages/Chat'
 
 function StatusPage() {
   return (
@@ -38,6 +39,7 @@ function AppContent() {
         <Route path="graph" element={<GraphExplorer />} />
         <Route path="patterns" element={<Patterns />} />
         <Route path="risk-check" element={<RiskCheck />} />
+        <Route path="chat" element={<Chat />} />
         <Route path="connect" element={<ClusterConnect />} />
         <Route path="status" element={<StatusPage />} />
         <Route path="settings" element={<SettingsPage />} />
