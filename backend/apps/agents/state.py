@@ -9,7 +9,7 @@ class AgentState(TypedDict):
     """State passed through the Retriever → Correlator → Recommender pipeline."""
 
     # INPUT (set before pipeline starts)
-    incident_id: int
+    incident_id: Optional[int]  # None when running in-memory (e.g. MCP)
     incident_type: str
     pod_name: str
     namespace: str

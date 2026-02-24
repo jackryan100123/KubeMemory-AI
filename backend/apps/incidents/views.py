@@ -1,4 +1,5 @@
 """DRF ViewSets for Incident, Fix, and ClusterPattern."""
+from django.core.cache import cache
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -11,6 +12,18 @@ from .serializers import (
     IncidentListSerializer,
 )
 from .tasks import update_corrective_rag_task
+
+# Rate limit: max 10 fix submissions per incident per hour per IP
+FIX_SUBMIT_RATE_LIMIT = 10
+FIX_SUBMIT_WINDOW_SECONDS = 3600
+
+
+def _get_client_ip(request):
+    """Return client IP for rate limiting."""
+    xff = request.META.get("HTTP_X_FORWARDED_FOR")
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.META.get("REMOTE_ADDR", "unknown")
 
 
 class IncidentViewSet(viewsets.ModelViewSet):
@@ -55,7 +68,7 @@ class IncidentViewSet(viewsets.ModelViewSet):
 
 
 class FixViewSet(viewsets.GenericViewSet):
-    """Create Fix for an incident; triggers corrective RAG Celery task."""
+    """Create Fix for an incident; triggers corrective RAG Celery task. Rate limited."""
 
     serializer_class = FixSerializer
 
@@ -66,6 +79,17 @@ class FixViewSet(viewsets.GenericViewSet):
                 {"error": "Incident not found."},
                 status=status.HTTP_404_NOT_FOUND,
             )
+        # Rate limit: 10 fix submissions per incident per hour per IP
+        ip = _get_client_ip(request)
+        cache_key = f"fix_submit:{incident_id}:{ip}"
+        count = cache.get(cache_key) or 0
+        if count >= FIX_SUBMIT_RATE_LIMIT:
+            return Response(
+                {"error": f"Rate limit exceeded. Max {FIX_SUBMIT_RATE_LIMIT} fix submissions per incident per hour."},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+        cache.set(cache_key, count + 1, timeout=FIX_SUBMIT_WINDOW_SECONDS)
+
         data = {**request.data, "incident": incident_id}
         serializer = FixSerializer(data=data)
         serializer.is_valid(raise_exception=True)

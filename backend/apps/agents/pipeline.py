@@ -49,14 +49,47 @@ def analyze_incident(incident_id: int) -> dict[str, Any]:
     except Incident.DoesNotExist:
         raise ValueError(f"Incident id={incident_id} not found")
 
-    initial_state: AgentState = {
+    initial_state = _state_from_incident(incident_id, incident)
+    start = time.time()
+    pipeline = get_pipeline()
+    final_state = pipeline.invoke(initial_state)
+    final_state["processing_time_ms"] = int((time.time() - start) * 1000)
+
+    # Save analysis back to Postgres
+    incident.ai_analysis = final_state.get("recommendation", "")
+    incident.save(update_fields=["ai_analysis"])
+
+    return final_state
+
+
+def _state_from_incident(
+    incident_id: int | None,
+    incident: Any,
+) -> AgentState:
+    """Build initial AgentState from an incident-like object (model or dict)."""
+    if hasattr(incident, "incident_type"):
+        it = incident.incident_type or ""
+        pn = incident.pod_name or ""
+        ns = incident.namespace or ""
+        desc = incident.description or ""
+        raw = (getattr(incident, "raw_logs", None) or "")[:500]
+        sev = incident.severity or ""
+    else:
+        it = incident.get("incident_type", "")
+        pn = incident.get("pod_name", "")
+        ns = incident.get("namespace", "")
+        desc = incident.get("description", "")
+        raw = (incident.get("raw_logs") or "")[:500]
+        sev = incident.get("severity", "medium")
+
+    return {
         "incident_id": incident_id,
-        "incident_type": incident.incident_type or "",
-        "pod_name": incident.pod_name or "",
-        "namespace": incident.namespace or "",
-        "description": incident.description or "",
-        "raw_logs": (incident.raw_logs or "")[:500],
-        "severity": incident.severity or "",
+        "incident_type": it,
+        "pod_name": pn,
+        "namespace": ns,
+        "description": desc,
+        "raw_logs": raw,
+        "severity": sev,
         "similar_incidents": [],
         "past_fixes": [],
         "corrections": [],
@@ -72,13 +105,30 @@ def analyze_incident(incident_id: int) -> dict[str, Any]:
         "processing_time_ms": 0,
     }
 
+
+def analyze_incident_in_memory(
+    pod_name: str,
+    namespace: str,
+    incident_type: str = "Unknown",
+    description: str = "",
+    logs_excerpt: str = "",
+) -> dict[str, Any]:
+    """
+    Run the LangGraph pipeline for an in-memory incident (no DB save).
+    Used by MCP tool analyze_incident. Returns final state with recommendation,
+    root_cause, blast_radius, etc.
+    """
+    incident = {
+        "pod_name": pod_name,
+        "namespace": namespace,
+        "incident_type": incident_type,
+        "description": description,
+        "raw_logs": logs_excerpt,
+        "severity": "medium",
+    }
+    initial_state = _state_from_incident(None, incident)
     start = time.time()
     pipeline = get_pipeline()
     final_state = pipeline.invoke(initial_state)
     final_state["processing_time_ms"] = int((time.time() - start) * 1000)
-
-    # Save analysis back to Postgres
-    incident.ai_analysis = final_state.get("recommendation", "")
-    incident.save(update_fields=["ai_analysis"])
-
     return final_state

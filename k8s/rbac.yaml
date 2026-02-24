@@ -1,11 +1,13 @@
 # ServiceAccount + ClusterRole + ClusterRoleBinding for KubeMemory watcher.
 # Least-privilege: only pods (get, list, watch), events (get, list, watch), namespaces (get, list).
+# Security: automountServiceAccountToken: false — mount the token only in the watcher Pod spec.
 ---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: kubememory-watcher
   namespace: default
+automountServiceAccountToken: false
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -34,3 +36,5 @@ subjects:
   - kind: ServiceAccount
     name: kubememory-watcher
     namespace: default
+# When running the watcher in-cluster, use serviceAccountName: kubememory-watcher
+# and mount the token explicitly in the Pod spec (e.g. projected volume with serviceAccountToken).

@@ -1,0 +1,45 @@
+# Production overrides — use with:
+# docker compose -f docker-compose.yml -f docker-compose.prod.yml up
+version: "3.9"
+
+services:
+  django-api:
+    build:
+      context: ./backend
+      target: runtime
+    command: daphne -b 0.0.0.0 -p 8000 config.asgi:application
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.prod
+    ports: []
+
+  celery-worker:
+    build:
+      context: ./backend
+      target: runtime
+    command: celery -A config worker --loglevel=warning --concurrency=4
+
+  celery-beat:
+    build:
+      context: ./backend
+      target: runtime
+    command: celery -A config beat --loglevel=warning
+
+  frontend:
+    build:
+      context: ./frontend
+      target: runtime
+      args:
+        VITE_API_URL: /api
+        VITE_WS_URL: /ws
+    ports:
+      - "80:80"
+      - "443:443"
+
+  postgres:
+    environment:
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --auth-host=scram-sha-256"
+
+  redis:
+    command: redis-server --appendonly yes
+    # Uncomment and set REDIS_PASSWORD in .env for production:
+    # command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
