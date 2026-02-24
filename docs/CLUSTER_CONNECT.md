@@ -7,6 +7,25 @@ Here's exactly how to set it up for each scenario.
 
 ---
 
+## Linux: step-by-step (Docker + Kind + watcher)
+
+Run these on an Ubuntu (or other Linux) host, from the project root, in order:
+
+| Step | Command | What it does |
+|------|----------|----------------|
+| 1 | `git pull` | Get latest (includes Kind config that exposes API on 0.0.0.0). |
+| 2 | `kind delete cluster --name kubememory-prod-sim` | Remove old cluster if it existed (so we get the new API bind). |
+| 3 | `cd k8s/prod-sim && ./bootstrap.sh` | Create Kind cluster (1 control-plane + 3 workers + namespaces). |
+| 4 | `cd ../..` | Back to project root. |
+| 5 | `kind get kubeconfig --name kubememory-prod-sim \| sed 's/127\.0\.0\.1/host.docker.internal/g' > kubeconfig` | Kubeconfig for the container (host.docker.internal:6443). |
+| 6 | `docker compose down && docker compose up -d` | Start stack; django-api gets `kubeconfig` and `host.docker.internal`. |
+| 7 | `docker compose exec django-api python manage.py migrate` | Apply DB migrations. |
+| 8 | `make watcher` | Run watcher inside container; should connect and watch namespaces. |
+
+If step 8 fails with **Connection refused** to `host.docker.internal`, ensure you recreated the cluster (steps 2–3) so the API server listens on `0.0.0.0:6443`.
+
+---
+
 ## Option A — Local Kind Cluster (Recommended for Testing)
 
 ### Step 1: Create the cluster
