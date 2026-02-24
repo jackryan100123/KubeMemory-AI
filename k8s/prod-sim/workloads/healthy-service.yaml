@@ -12,6 +12,9 @@ spec:
     matchLabels:
       app: notification-service
   template:
+    metadata:
+      labels:
+        app: notification-service
     spec:
       containers:
       - name: notification-service

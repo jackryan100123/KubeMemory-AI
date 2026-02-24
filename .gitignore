@@ -2,6 +2,7 @@
 .env.*
 !.env.example
 *claude_desktop_config*
+kubeconfig
 *.pem
 *.key
 *credentials*

@@ -36,7 +36,32 @@ K8S_KUBECONFIG_PATH=/Users/yourname/.kube/config
 K8S_NAMESPACES=production,staging,data-pipeline
 ```
 
-### Step 4: Start watcher
+**If you run the app in Docker** (e.g. `docker compose up` and `make watcher`), the watcher runs *inside* the `django-api` container and cannot see your host `~/.kube/config`. Do this instead:
+
+1. **Create a kubeconfig the container can use** (from your project root, same machine where Kind runs):
+
+   ```bash
+   kind get kubeconfig --name kubememory-prod-sim | sed 's/127\.0\.0\.1/host.docker.internal/g' > kubeconfig
+   ```
+
+   (Use your actual Kind cluster name if different, e.g. `kubememory` for `k8s/kind-cluster.yaml`.)
+
+2. **Restart the stack** so the `django-api` container gets the mounted kubeconfig and `host.docker.internal`:
+
+   ```bash
+   docker compose down
+   docker compose up -d
+   ```
+
+3. **Start the watcher** (runs inside the container; it will use `/app/.kube/config`):
+
+   ```bash
+   make watcher
+   ```
+
+`K8S_KUBECONFIG_PATH` is already set in `docker-compose.yml` to `/app/.kube/config`. The file `kubeconfig` in the project root is mounted there and is in `.gitignore`.
+
+### Step 4: Start watcher (when not using Docker)
 
 ```bash
 make watcher
@@ -133,6 +158,7 @@ make verify-memory
 
 | Error | Fix |
 |-------|-----|
+| `Invalid kube-config file. No configuration found` | Watcher is running in Docker and has no kubeconfig. Create `kubeconfig` in project root: `kind get kubeconfig --name <cluster-name> \| sed 's/127\.0\.0\.1/host.docker.internal/g' > kubeconfig`, then `docker compose up -d` and `make watcher`. |
 | `connection refused at 6443` | Docker not running or cluster stopped. Run `kind get clusters` |
 | `Forbidden: pods is forbidden` | RBAC not applied. Run `kubectl apply -f k8s/rbac.yaml` |
 | `no such file: ~/.kube/config` | Kubeconfig missing. Run the appropriate cloud CLI command above |

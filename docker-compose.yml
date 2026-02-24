@@ -40,6 +40,9 @@ services:
       CELERY_RESULT_BACKEND: redis://redis:6379/2
       CHANNEL_LAYERS_HOST: redis
       CHANNEL_LAYERS_PORT: 6379
+      K8S_KUBECONFIG_PATH: /app/.kube/config
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy
@@ -49,6 +52,7 @@ services:
         condition: service_healthy
     volumes:
       - chroma_data:/app/chroma_data
+      - ./kubeconfig:/app/.kube/config:ro
     ports:
       - "8000:8000"
     command: python -m daphne -b 0.0.0.0 -p 8000 config.asgi:application
