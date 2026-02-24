@@ -17,10 +17,16 @@ Run these on an Ubuntu (or other Linux) host, from the project root, in order:
 | 2 | `kind delete cluster --name kubememory-prod-sim` | Remove old cluster if it existed (so we get the new API bind). |
 | 3 | `cd k8s/prod-sim && ./bootstrap.sh` | Create Kind cluster (1 control-plane + 3 workers + namespaces). |
 | 4 | `cd ../..` | Back to project root. |
-| 5 | `kind get kubeconfig --name kubememory-prod-sim \| sed 's/127\.0\.0\.1/host.docker.internal/g' > kubeconfig` | Kubeconfig for the container (host.docker.internal:6443). |
+| 5 | (see code block below) | Kubeconfig for the container (host.docker.internal:6443). |
 | 6 | `docker compose down && docker compose up -d` | Start stack; django-api gets `kubeconfig` and `host.docker.internal`. |
 | 7 | `docker compose exec django-api python manage.py migrate` | Apply DB migrations. |
 | 8 | `make watcher` | Run watcher inside container; should connect and watch namespaces. |
+
+**Step 5 — copy and run this as one line (use a single pipe `|`, no backslash):**
+
+```bash
+kind get kubeconfig --name kubememory-prod-sim | sed 's/127\.0\.0\.1/host.docker.internal/g' > kubeconfig
+```
 
 If step 8 fails with **Connection refused** to `host.docker.internal`, ensure you recreated the cluster (steps 2–3) so the API server listens on `0.0.0.0:6443`.
 
@@ -184,7 +190,7 @@ make verify-memory
 
 | Error | Fix |
 |-------|-----|
-| `Invalid kube-config file. No configuration found` | Watcher is running in Docker and has no kubeconfig. Create `kubeconfig` in project root: `kind get kubeconfig --name <cluster-name> \| sed 's/127\.0\.0\.1/host.docker.internal/g' > kubeconfig`, then `docker compose up -d` and `make watcher`. |
+| `Invalid kube-config file. No configuration found` | Watcher is running in Docker and has no kubeconfig. Create `kubeconfig` in project root: `kind get kubeconfig --name <cluster-name> | sed 's/127\.0\.0\.1/host.docker.internal/g' > kubeconfig` (one pipe, no backslash), then `docker compose up -d` and `make watcher`. |
 | `Connection refused` to `host.docker.internal` (e.g. port 34083) | On Linux, Kind’s API server is bound to 127.0.0.1 by default, so the container cannot reach it. Recreate the cluster with the prod-sim config that sets `networking.apiServerAddress: "0.0.0.0"` (see Option A step 3), then regenerate `kubeconfig` and restart compose. |
 | `connection refused at 6443` | Docker not running or cluster stopped. Run `kind get clusters` |
 | `Forbidden: pods is forbidden` | RBAC not applied. Run `kubectl apply -f k8s/rbac.yaml` |
