@@ -10,8 +10,12 @@ import signal
 import time
 from typing import Any
 
+import urllib3
 from django.core.management.base import BaseCommand
 from kubernetes import client, config
+
+# Suppress TLS warning when kubeconfig has insecure-skip-tls-verify (e.g. Kind from Docker)
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 from kubernetes.client.rest import ApiException
 from kubernetes.watch import Watch
 

@@ -7,7 +7,12 @@ import os
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from typing import Any
 
+import urllib3
+
 logger = logging.getLogger(__name__)
+
+# Suppress TLS warning when kubeconfig has insecure-skip-tls-verify (e.g. Kind from Docker)
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 def test_connection(
@@ -42,11 +47,14 @@ def test_connection(
         if connection_method == "in_cluster":
             config.load_incluster_config()
         else:
-            path = (kubeconfig_path or os.environ.get("KUBECONFIG") or "").strip()
-            if not path:
-                path = os.path.expanduser("~/.kube/config")
-            if not os.path.isfile(path):
-                raise FileNotFoundError(f"Kubeconfig not found: {path}")
+            raw = (kubeconfig_path or os.environ.get("KUBECONFIG") or os.environ.get("K8S_KUBECONFIG_PATH") or "").strip()
+            if not raw:
+                raw = "~/.kube/config"
+            path = os.path.expanduser(raw)
+            if not os.path.isfile(path) and os.environ.get("K8S_KUBECONFIG_PATH"):
+                path = os.environ.get("K8S_KUBECONFIG_PATH", "")
+            if not path or not os.path.isfile(path):
+                raise FileNotFoundError(f"Kubeconfig not found: {path or raw}")
             config.load_kube_config(config_file=path, context=context_name or None)
         v1 = client.CoreV1Api()
         nodes = v1.list_node()

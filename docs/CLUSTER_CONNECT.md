@@ -25,10 +25,17 @@ Run these on an Ubuntu (or other Linux) host, from the project root, in order:
 **Step 5 — copy and run this as one line (use a single pipe `|`, no backslash):**
 
 ```bash
-kind get kubeconfig --name kubememory-prod-sim | sed 's/127\.0\.0\.1/host.docker.internal/g' > kubeconfig
+kind get kubeconfig --name kubememory-prod-sim | sed -e 's/127\.0\.0\.1/host.docker.internal/g' -e 's/0\.0\.0\.0/host.docker.internal/g' -e '/server: https:\/\/host.docker.internal/a\    insecure-skip-tls-verify: true' > kubeconfig
 ```
 
-If step 8 fails with **Connection refused** to `host.docker.internal`, ensure you recreated the cluster (steps 2–3) so the API server listens on `0.0.0.0:6443`.
+- Kind writes the API server as `0.0.0.0` when you set `apiServerAddress: "0.0.0.0"`; the container must use `host.docker.internal`, so both are replaced.
+- The Kind API server certificate is not issued for `host.docker.internal`, so we add `insecure-skip-tls-verify: true` for this local Docker-only kubeconfig.
+
+**Docker permission (Linux):** If you get `permission denied` on the Docker socket, either run the commands above with `sudo`, or add your user to the `docker` group so you don’t need sudo: `sudo usermod -aG docker $USER`, then log out and back in (or `newgrp docker`).
+
+**Host `kubectl` without sudo:** If `kubectl` says "connection to 127.0.0.1:34083 refused", your user’s kubeconfig is pointing at an old port. Use the cluster’s API on the host (no `host.docker.internal`): `sudo kind get kubeconfig --name kubememory-prod-sim > ~/.kube/config` then `sudo chown $USER:$USER ~/.kube/config`. That gives you `127.0.0.1:6443` for host-side `kubectl`.
+
+If step 8 fails with **Connection refused**, ensure you recreated the cluster (steps 2–3) and that step 5 replaced both `127.0.0.1` and `0.0.0.0` with `host.docker.internal`.
 
 ---
 
@@ -70,10 +77,10 @@ K8S_NAMESPACES=production,staging,data-pipeline
    cd k8s/prod-sim && ./bootstrap.sh
    ```
 
-2. **Create a kubeconfig the container can use** (from your project root, same machine where Kind runs):
+2. **Create a kubeconfig the container can use** (from your project root, same machine where Kind runs). Replace host with `host.docker.internal` and skip TLS verify (Kind’s cert isn’t for that hostname):
 
    ```bash
-   kind get kubeconfig --name kubememory-prod-sim | sed 's/127\.0\.0\.1/host.docker.internal/g' > kubeconfig
+   kind get kubeconfig --name kubememory-prod-sim | sed -e 's/127\.0\.0\.1/host.docker.internal/g' -e 's/0\.0\.0\.0/host.docker.internal/g' -e '/server: https:\/\/host.docker.internal/a\    insecure-skip-tls-verify: true' > kubeconfig
    ```
 
    (Use your actual Kind cluster name if different, e.g. `kubememory` for `k8s/kind-cluster.yaml`. With prod-sim the API server will be on port 6443.)
@@ -190,10 +197,12 @@ make verify-memory
 
 | Error | Fix |
 |-------|-----|
-| `Invalid kube-config file. No configuration found` | Watcher is running in Docker and has no kubeconfig. Create `kubeconfig` in project root: `kind get kubeconfig --name <cluster-name> | sed 's/127\.0\.0\.1/host.docker.internal/g' > kubeconfig` (one pipe, no backslash), then `docker compose up -d` and `make watcher`. |
+| `Invalid kube-config file. No configuration found` | Watcher is running in Docker and has no kubeconfig. Create `kubeconfig` in project root: `kind get kubeconfig ... | sed -e 's/127\.0\.0\.1/host.docker.internal/g' -e 's/0\.0\.0\.0/host.docker.internal/g' -e '/server: https:\/\/host.docker.internal/a\    insecure-skip-tls-verify: true' > kubeconfig`, then `docker compose up -d` and `make watcher`. |
 | `Connection refused` to `host.docker.internal` (e.g. port 34083) | On Linux, Kind’s API server is bound to 127.0.0.1 by default, so the container cannot reach it. Recreate the cluster with the prod-sim config that sets `networking.apiServerAddress: "0.0.0.0"` (see Option A step 3), then regenerate `kubeconfig` and restart compose. |
+| `SSL: CERTIFICATE_VERIFY_FAILED` / `certificate is not valid for 'host.docker.internal'` | Kind’s API server cert is for a different hostname. Regenerate `kubeconfig` with the sed that adds `insecure-skip-tls-verify: true` (see Step 5 in the Linux section). |
 | `connection refused at 6443` | Docker not running or cluster stopped. Run `kind get clusters` |
 | `Forbidden: pods is forbidden` | RBAC not applied. Run `kubectl apply -f k8s/rbac.yaml` |
 | `no such file: ~/.kube/config` | Kubeconfig missing. Run the appropriate cloud CLI command above |
 | `watcher connects but no events` | Pods are healthy. Apply test workloads: `kubectl apply -f k8s/prod-sim/workloads/` |
+| **UI "Test connection" fails** (Docker) | Backend uses the cluster’s kubeconfig path; in Docker it falls back to `K8S_KUBECONFIG_PATH` (/app/.kube/config). Ensure the project root `kubeconfig` file exists (Step 5), then restart: `docker compose up -d --build django-api` and try again. |
 | `Ollama not responding` | Run `docker compose up ollama` and wait for model pull to finish |
