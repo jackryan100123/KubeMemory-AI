@@ -51,8 +51,11 @@ def test_connection(
             if not raw:
                 raw = "~/.kube/config"
             path = os.path.expanduser(raw)
-            if not os.path.isfile(path) and os.environ.get("K8S_KUBECONFIG_PATH"):
-                path = os.environ.get("K8S_KUBECONFIG_PATH", "")
+            # When running in Docker, stored path (e.g. ~/.kube/config) often missing; use mounted config
+            env_path = os.environ.get("K8S_KUBECONFIG_PATH", "").strip()
+            if (not path or not os.path.isfile(path)) and env_path and os.path.isfile(env_path):
+                path = env_path
+                logger.info("Using K8S_KUBECONFIG_PATH for cluster test: %s", path)
             if not path or not os.path.isfile(path):
                 raise FileNotFoundError(f"Kubeconfig not found: {path or raw}")
             config.load_kube_config(config_file=path, context=context_name or None)

@@ -68,10 +68,17 @@ export default function TopBar() {
         <span
           className={clsx(
             'flex items-center gap-2 text-xs font-mono',
-            hasLiveActivity ? 'text-accent-red animate-pulse' : 'text-muted'
+            wsConnected ? 'text-accent' : 'text-muted',
+            hasLiveActivity && wsConnected && 'animate-pulse'
           )}
+          title={wsConnected ? 'Live feed connected' : 'Connecting to live feed…'}
         >
-          <span className="inline-block h-2 w-2 rounded-full bg-accent-red" />
+          <span
+            className={clsx(
+              'inline-block h-2 w-2 rounded-full flex-shrink-0',
+              wsConnected ? 'bg-accent' : 'bg-muted'
+            )}
+          />
           Live
         </span>
         <span
@@ -84,7 +91,7 @@ export default function TopBar() {
           <span
             className={clsx(
               'inline-block h-2 w-2 rounded-full',
-              wsConnected ? 'bg-accent animate-pulse' : 'bg-muted'
+              wsConnected ? 'bg-accent' : 'bg-muted'
             )}
           />
           {wsConnected ? 'WS' : 'WS'}

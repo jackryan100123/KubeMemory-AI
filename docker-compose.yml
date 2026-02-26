@@ -111,6 +111,8 @@ services:
       django-api:
         condition: service_started
     command: python -m celery -A config beat -l info
+    healthcheck:
+      disable: true
     restart: unless-stopped
     networks:
       - kubememory-net
@@ -170,7 +172,7 @@ services:
     depends_on:
       - django-api
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:80"]
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:80"]
       interval: 10s
       timeout: 5s
       retries: 3

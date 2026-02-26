@@ -95,6 +95,8 @@ def run_chat_agent(
     user_message: str,
     history: list[dict[str, str]] | None = None,
     stream_callback: Callable[[str, dict], None] | None = None,
+    cluster_id: int | None = None,
+    cluster_name: str | None = None,
 ) -> str:
     """
     Run the agent loop: user message + optional history, Ollama with tools, execute tool_calls, repeat until done.
@@ -114,7 +116,10 @@ def run_chat_agent(
         return err
 
     tools = get_ollama_tools()
-    messages: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+    system = SYSTEM_PROMPT
+    if cluster_name:
+        system += f"\n\n**Current cluster:** {cluster_name}. Prefer data and namespaces for this cluster when answering."
+    messages: list[dict[str, Any]] = [{"role": "system", "content": system}]
     if history:
         for h in history:
             messages.append({"role": h.get("role", "user"), "content": h.get("content", "") or ""})

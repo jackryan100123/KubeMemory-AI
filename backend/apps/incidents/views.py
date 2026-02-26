@@ -1,4 +1,6 @@
 """DRF ViewSets for Incident, Fix, and ClusterPattern."""
+import logging
+
 from django.core.cache import cache
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
@@ -12,6 +14,8 @@ from .serializers import (
     IncidentListSerializer,
 )
 from .tasks import update_corrective_rag_task
+
+logger = logging.getLogger(__name__)
 
 # Rate limit: max 10 fix submissions per incident per hour per IP
 FIX_SUBMIT_RATE_LIMIT = 10
@@ -30,7 +34,40 @@ class IncidentViewSet(viewsets.ModelViewSet):
     """List, retrieve, partial_update (status changes) for Incident."""
 
     queryset = Incident.objects.all()
-    http_method_names = ["get", "head", "options", "patch"]
+    http_method_names = ["get", "head", "options", "patch", "post"]
+
+    @action(detail=False, methods=["post"], url_path="clear")
+    def clear_all(self, request) -> Response:
+        """
+        Clear all incidents, fixes, patterns, ChromaDB embeddings, and Neo4j graph.
+        Use when disconnecting cluster to reset app to null state.
+        """
+        try:
+            from apps.memory.graph_builder import KubeGraphBuilder
+            from apps.memory.vector_store import IncidentVectorStore
+
+            count_incidents = Incident.objects.count()
+            Incident.objects.all().delete()  # cascades to Fix
+            ClusterPattern.objects.all().delete()
+
+            store = IncidentVectorStore()
+            store.clear_all()
+
+            graph = KubeGraphBuilder()
+            graph.clear_all()
+            graph.close()
+
+            logger.info("Cleared %s incidents and all memory (Chroma + Neo4j).", count_incidents)
+            return Response(
+                {"cleared_incidents": count_incidents, "status": "ok"},
+                status=status.HTTP_200_OK,
+            )
+        except Exception as e:
+            logger.exception("clear_all failed: %s", e)
+            return Response(
+                {"error": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
     def get_serializer_class(self):
         if self.action == "retrieve":

@@ -136,6 +136,19 @@ class IncidentVectorStore:
             })
         return out
 
+    def clear_all(self) -> None:
+        """
+        Remove all documents from the incidents collection (reset for disconnect/null state).
+        Deletes and recreates the collection so it is empty.
+        """
+        name = self._collection.name
+        self._client.delete_collection(name=name)
+        self._collection = self._client.get_or_create_collection(
+            name=name,
+            metadata={"hnsw:space": "cosine"},
+        )
+        logger.info("ChromaDB collection %s cleared.", name)
+
     def embed_fix(self, fix: Fix) -> str:
         """
         Embed fix description with metadata linking to incident.

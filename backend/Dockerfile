@@ -52,7 +52,7 @@ WORKDIR /app
 COPY --chown=appuser:appuser . .
 
 # Create required directories with correct ownership
-RUN mkdir -p /app/static /app/media /app/chroma_data \
+RUN mkdir -p /app/static /app/media /app/chroma_data /app/kubeconfigs /app/.kube \
     && chown -R appuser:appuser /app
 
 # Switch to non-root

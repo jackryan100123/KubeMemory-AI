@@ -14,11 +14,19 @@ const client = axios.create({
 // Request interceptor — add auth token when implemented
 client.interceptors.request.use((config) => config)
 
-// Response interceptor — global error handling
+// Response interceptor — global error handling; always log a clear message (never "undefined")
 client.interceptors.response.use(
   (response) => response,
   (error) => {
-    console.error('API Error:', error.response?.data)
+    const status = error.response?.status
+    const data = error.response?.data
+    const msg =
+      (typeof data === 'object' && data !== null && (data.detail || data.error || data.message))
+        ? String(data.detail || data.error || data.message)
+        : typeof data === 'string'
+          ? data
+          : error.message || `Request failed${status ? ` (${status})` : ''}`
+    console.error('API Error:', msg, status ? `[${status}]` : '')
     return Promise.reject(error)
   }
 )

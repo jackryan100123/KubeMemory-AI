@@ -23,7 +23,11 @@ export default function NamespaceHeatmap({ incidents, namespaces, onSelectNamesp
         <span className="font-mono font-semibold text-white">NAMESPACE HEALTH</span>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 p-4">
-        {nsList.map((ns) => {
+        {nsList.length === 0 ? (
+          <p className="text-muted text-sm font-mono col-span-full py-4">
+            No namespaces yet. Incidents will appear after you connect a cluster and the watcher ingests events.
+          </p>
+        ) : nsList.map((ns) => {
           const score = namespaceHealth(ns, list)
           const nsIncidents = list.filter((i) => i.namespace === ns && i.status !== 'resolved')
           const criticalCount = nsIncidents.filter((i) => (i.severity || '').toLowerCase() === 'critical').length
@@ -61,3 +65,4 @@ export default function NamespaceHeatmap({ incidents, namespaces, onSelectNamesp
     </div>
   )
 }
+

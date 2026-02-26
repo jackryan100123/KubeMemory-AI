@@ -25,6 +25,8 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
     async def receive_json(self, content: dict) -> None:
         message = content.get("message") or content.get("text") or ""
         history = content.get("history") or []
+        cluster_id = content.get("cluster_id")
+        cluster_name = content.get("cluster_name") or ""
         if not message or not isinstance(message, str):
             await self.send_json({"type": "error", "message": "Missing or invalid 'message'."})
             return
@@ -39,7 +41,10 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
                     user_message=message,
                     history=history,
                     stream_callback=stream_cb,
+                    cluster_id=cluster_id,
+                    cluster_name=cluster_name,
                 )
+                # Agent sends "done" via stream_cb; ensure we never leave client loading if it didn't
             except Exception as e:
                 logger.exception("Chat agent failed: %s", e)
                 asyncio.run_coroutine_threadsafe(
@@ -47,7 +52,11 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
                     self._loop,
                 )
 
-        await asyncio.get_event_loop().run_in_executor(_executor, run_agent)
+        try:
+            await asyncio.get_event_loop().run_in_executor(_executor, run_agent)
+        except Exception as e:
+            logger.exception("Chat executor failed: %s", e)
+            await self.send_json({"type": "error", "message": str(e)})
 
     async def _send_json(self, payload: dict) -> None:
         """Send JSON to the client (must run on async loop)."""

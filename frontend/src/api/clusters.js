@@ -23,3 +23,15 @@ export const deleteCluster = (id) =>
 
 export const updateCluster = (id, data) =>
   client.patch(`/clusters/${id}/`, data).then((r) => r.data)
+
+export const fetchClusterSecurityInfo = () =>
+  client.get('/clusters/security-info/').then((r) => r.data)
+
+export const startClusterWatcher = (clusterId) =>
+  client.post(`/clusters/${clusterId}/start-watcher/`).then((r) => r.data)
+
+export const watcherStatus = () =>
+  client.get('/clusters/watcher/status/').then((r) => r.data)
+
+export const stopWatcher = () =>
+  client.post('/clusters/watcher/stop/').then((r) => r.data)

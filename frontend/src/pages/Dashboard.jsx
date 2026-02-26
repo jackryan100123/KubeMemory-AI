@@ -87,6 +87,7 @@ export default function Dashboard() {
   const health = clusterHealth(allList)
   const patterns = patternsData?.results ?? (Array.isArray(patternsData) ? patternsData : [])
   const topPatterns = patterns.slice(0, 5)
+  const agentOk = agentStatus?.ollama_ok && agentStatus?.chroma_doc_count !== undefined
 
   const wasteThisMonth = useMemo(() => {
     const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1)
@@ -115,7 +116,7 @@ export default function Dashboard() {
     <ErrorBoundary>
       <div className="p-6 space-y-6">
         {/* Section 1 — Stats Row */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
           <div className="rounded-lg border border-border bg-surface p-4">
             <p className="text-muted text-xs font-mono uppercase tracking-wider">Open Incidents</p>
             <p className="text-2xl font-mono font-bold text-white mt-1">{openList?.length ?? 0}</p>
@@ -152,6 +153,21 @@ export default function Dashboard() {
             </p>
             <p className="text-muted text-xs font-mono mt-1">
               across {wastePodCount} pod{wastePodCount !== 1 ? 's' : ''} • fix these now
+            </p>
+          </div>
+          <div className="rounded-lg border border-border bg-surface p-4">
+            <p className="text-muted text-xs font-mono uppercase tracking-wider">AI Pipeline</p>
+            <p className="text-2xl font-mono font-bold mt-1">
+              {agentStatus === undefined ? (
+                <span className="text-muted">…</span>
+              ) : agentOk ? (
+                <span className="text-accent">Ready</span>
+              ) : (
+                <span className="text-accent-red">Degraded</span>
+              )}
+            </p>
+            <p className="text-muted text-xs font-mono mt-1">
+              Ollama + ChromaDB
             </p>
           </div>
         </div>
@@ -207,9 +223,9 @@ export default function Dashboard() {
               ) : !topPatterns.length ? (
                 <EmptyState title="No patterns yet" description="Patterns appear after analysis." />
               ) : (
-                topPatterns.map((p) => (
+                topPatterns.map((p, idx) => (
                   <div
-                    key={`${p.pod_name}-${p.namespace}-${p.incident_type}`}
+                    key={p.id != null ? `pattern-${p.id}` : `pattern-${p.pod_name}-${p.namespace}-${p.incident_type}-${idx}`}
                     className="border-b border-border pb-3 last:border-0 last:pb-0"
                   >
                     <p className="font-mono text-sm text-white">{p.pod_name}</p>

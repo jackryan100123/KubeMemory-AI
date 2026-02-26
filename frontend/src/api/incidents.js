@@ -14,3 +14,7 @@ export const submitFix = (incidentId, data) =>
 
 export const fetchPatterns = () =>
   client.get('/incidents/patterns/').then(r => r.data)
+
+/** Clear all incidents, fixes, patterns, ChromaDB and Neo4j (reset to null state). */
+export const clearIncidentHistory = () =>
+  client.post('/incidents/clear/').then(r => r.data)

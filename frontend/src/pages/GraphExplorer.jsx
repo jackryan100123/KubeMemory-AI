@@ -187,8 +187,9 @@ export default function GraphExplorer() {
           {/* Graph area */}
           <div ref={containerRef} className="flex-1 relative bg-bg min-h-[400px]">
             {isLoading ? (
-              <div className="absolute inset-0 flex items-center justify-center">
-                <LoadingSpinner />
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
+                <LoadingSpinner className="w-10 h-10" />
+                <p className="font-mono text-sm text-muted">Loading graph… (can take up to a minute)</p>
               </div>
             ) : !graphData.nodes.length ? (
               <div className="absolute inset-0 flex items-center justify-center">

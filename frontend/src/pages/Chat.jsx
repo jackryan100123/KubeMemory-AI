@@ -1,11 +1,19 @@
 import React, { useRef, useEffect } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { fetchClusters } from '../api/clusters'
 import { useChatWebSocket } from '../hooks/useChatWebSocket'
 import ChatMessage from '../components/chat/ChatMessage'
 import ChatInput from '../components/chat/ChatInput'
 import LoadingSpinner from '../components/shared/LoadingSpinner'
 
 export default function Chat() {
-  const { messages, sendMessage, isLoading, error, connected, clearMessages } = useChatWebSocket()
+  const { data: clusters } = useQuery({ queryKey: ['clusters'], queryFn: fetchClusters })
+  const list = Array.isArray(clusters) ? clusters : (clusters?.results || [])
+  const activeCluster = list.find((c) => c.status === 'watching' || c.status === 'connected') || list[0]
+  const { messages, sendMessage, isLoading, error, connected, clearMessages } = useChatWebSocket({
+    clusterId: activeCluster?.id ?? null,
+    clusterName: activeCluster?.name ?? null,
+  })
   const scrollRef = useRef(null)
 
   useEffect(() => {

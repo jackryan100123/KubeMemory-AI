@@ -135,6 +135,15 @@ class KubeGraphBuilder:
                 timestamp=timestamp,
             )
 
+    def clear_all(self) -> None:
+        """
+        Remove all graph data (Pods, Services, Nodes, Incidents, Fixes, Deployments).
+        Used when disconnecting cluster and clearing incident history.
+        """
+        with self._driver.session() as session:
+            session.run("MATCH (n) DETACH DELETE n")
+        logger.info("Neo4j graph cleared.")
+
     def resolve_incident(self, neo4j_id: str, fix_description: str) -> None:
         """Set resolved: true on Incident and create Fix node with RESOLVED_BY relationship."""
         with self._driver.session() as session:
