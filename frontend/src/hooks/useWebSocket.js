@@ -11,9 +11,11 @@ export function useWebSocket() {
 
   const connect = useCallback(() => {
     // When built in Docker, use same origin so nginx can proxy /ws to backend.
+    // In Vite dev, same-origin is 5173; use explicit backend (8000) if set or in dev so WS connects directly.
     // Strip trailing /ws so we never get .../ws/ws/incidents/
     const raw =
       import.meta.env.VITE_WS_URL ||
+      (import.meta.env.DEV ? 'ws://localhost:8000' : null) ||
       (typeof window !== 'undefined'
         ? `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`
         : 'ws://localhost:8000')

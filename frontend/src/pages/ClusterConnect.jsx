@@ -3,19 +3,67 @@ import { useNavigate } from 'react-router-dom'
 import { createCluster, testCluster, fetchClusterNamespaces, connectCluster, updateCluster, fetchClusterSecurityInfo } from '../api/clusters'
 import toast from 'react-hot-toast'
 
-const CONNECTION_METHODS = [
-  { id: 'paste', label: 'Paste kubeconfig', desc: 'Easiest: paste YAML, we save it. Works with Minikube/Kind.', icon: '📋' },
-  { id: 'kubeconfig', label: 'Kubeconfig File Path', desc: 'For: any remote cluster', icon: '📁' },
-  { id: 'context', label: 'Kind / Local (Auto-detect)', desc: 'For: local dev Kind/Minikube', icon: '⎈' },
-  { id: 'in_cluster', label: 'In-Cluster', desc: 'For: production deployments', icon: '🔧' },
+const WORKFLOWS = [
+  {
+    id: 'paste',
+    title: 'Paste kubeconfig',
+    subtitle: 'I have an existing cluster and can copy my config',
+    icon: '📋',
+    bestFor: 'Kind, Minikube, or any cluster where you can run kubectl',
+  },
+  {
+    id: 'kubeconfig',
+    title: 'Kubeconfig file path',
+    subtitle: 'I have a config file (e.g. from cloud or custom path)',
+    icon: '📁',
+    bestFor: 'GKE, EKS, AKS, or when the app can read a file path',
+  },
+  {
+    id: 'context',
+    title: 'Use default kubeconfig',
+    subtitle: 'kubectl already works; use my current context',
+    icon: '⎈',
+    bestFor: 'Local dev when the backend can read ~/.kube/config',
+  },
+  {
+    id: 'in_cluster',
+    title: 'In-cluster',
+    subtitle: 'KubeMemory runs inside the cluster (e.g. as a pod)',
+    icon: '🔧',
+    bestFor: 'Production when KubeMemory is deployed in the same cluster',
+  },
+]
+
+const PASTE_INSTRUCTIONS = [
+  'In your terminal (where kubectl works), run:',
+  'kubectl config view --minify --raw',
+  'Copy the entire output, then paste it in the box below.',
+  'If this app runs in Docker and your cluster is on the same machine, check "App runs in Docker".',
+]
+
+const FILE_PATH_INSTRUCTIONS = [
+  'Use the path to your kubeconfig file that this app can read.',
+  'Examples: ~/.kube/config, /path/to/my-cluster.yaml, or a path mounted into the app container.',
+  'If the app runs in Docker, the path must be inside the container (e.g. a mounted volume).',
+]
+
+const CONTEXT_INSTRUCTIONS = [
+  'Run: kubectl config current-context',
+  'Enter that context name below (e.g. kind-demo, minikube, or my-gke-context).',
+  'The app will use the default kubeconfig from the environment.',
+]
+
+const IN_CLUSTER_INSTRUCTIONS = [
+  'No kubeconfig needed. Use this when KubeMemory is deployed as a pod in the same cluster.',
+  'The app will use the in-cluster service account.',
 ]
 
 export default function ClusterConnect() {
   const navigate = useNavigate()
   const [step, setStep] = useState(1)
   const [method, setMethod] = useState('')
-  const [clusterName, setClusterName] = useState('kubememory-prod-sim')
-  const [kubeconfigPath, setKubeconfigPath] = useState('')
+  const [clusterName, setClusterName] = useState('')
+  const [kubeconfigPath, setKubeconfigPath] = useState('~/.kube/config')
   const [contextName, setContextName] = useState('')
   const [clusterId, setClusterId] = useState(null)
   const [testResult, setTestResult] = useState(null)
@@ -58,29 +106,48 @@ export default function ClusterConnect() {
     return parts.length ? parts.join('; ') : (e.message || 'Validation failed')
   }
 
+  const getMethodInstructions = () => {
+    if (method === 'paste') return PASTE_INSTRUCTIONS
+    if (method === 'kubeconfig') return FILE_PATH_INSTRUCTIONS
+    if (method === 'context') return CONTEXT_INSTRUCTIONS
+    if (method === 'in_cluster') return IN_CLUSTER_INSTRUCTIONS
+    return []
+  }
+
+  const canProceedFromStep2 = () => {
+    if (!method) return false
+    if (method === 'paste') return !!kubeconfigPaste.trim()
+    if (method === 'in_cluster') return !!clusterName.trim()
+    return true
+  }
+
+  const getDefaultClusterName = () => {
+    if (clusterName) return clusterName
+    if (method === 'paste') return 'my-cluster'
+    if (method === 'context') return 'kind-demo'
+    return 'my-cluster'
+  }
+
   const handleNextFromMethod = () => {
-    if (!method) return
+    if (!method || !canProceedFromStep2()) return
     const path = method === 'in_cluster' ? '' : (method === 'paste' ? '' : (kubeconfigPath || '~/.kube/config'))
-    const ctx = method === 'context' ? (contextName || `kind-${clusterName}`) : (contextName || '')
+    const ctx = method === 'context' ? (contextName || `kind-${clusterName || 'demo'}`) : (contextName || '')
+    const name = (clusterName || '').trim() || getDefaultClusterName()
     const payload = {
-      name: (clusterName || '').trim() || (method === 'paste' ? 'minikube' : 'kubememory-prod-sim'),
-      connection_method: 'kubeconfig',
+      name,
+      connection_method: method === 'in_cluster' ? 'in_cluster' : method === 'context' ? 'context' : 'kubeconfig',
       kubeconfig_path: path,
       context_name: ctx,
       namespaces: [],
     }
     if (method === 'paste') {
-      const content = (kubeconfigPaste || '').trim()
-      if (!content) {
-        toast.error('Paste your kubeconfig YAML (e.g. from: kubectl config view --minify --raw)')
-        return
-      }
-      payload.kubeconfig_content = content
+      payload.kubeconfig_content = kubeconfigPaste.trim()
       payload.use_docker_host = useDockerHost
     }
     createCluster(payload)
       .then((c) => {
         setClusterId(c.id)
+        setClusterName(name)
         setStep(3)
       })
       .catch((e) => {
@@ -148,11 +215,12 @@ export default function ClusterConnect() {
   return (
     <div className="p-6 max-w-2xl mx-auto">
       <div className="rounded-lg border border-border bg-surface p-6 space-y-6">
+        {/* Step 1: Welcome */}
         {step === 1 && (
           <>
-            <h1 className="text-xl font-mono font-bold text-white">⎈ Connect Your Cluster</h1>
+            <h1 className="text-xl font-mono font-bold text-white">⎈ Connect a cluster</h1>
             <p className="text-muted text-sm">
-              KubeMemory needs read-only access to your cluster to watch events. It NEVER modifies anything.
+              Choose how you want to connect. KubeMemory only needs read-only access and never modifies your cluster.
             </p>
             <button
               type="button"
@@ -191,16 +259,20 @@ export default function ClusterConnect() {
               onClick={handleGetStarted}
               className="px-4 py-2 rounded bg-accent text-bg font-mono font-semibold hover:opacity-90"
             >
-              GET STARTED →
+              Choose how to connect →
             </button>
           </>
         )}
 
+        {/* Step 2: Pick workflow + configure */}
         {step === 2 && (
           <>
-            <h2 className="font-mono font-semibold text-white">Connection Method</h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              {CONNECTION_METHODS.map((m) => (
+            <h2 className="font-mono font-semibold text-white">How do you want to connect?</h2>
+            <p className="text-muted text-xs">
+              Not sure? Use <strong className="text-white">Paste kubeconfig</strong> if you can run <code className="bg-surface2 px-1 rounded">kubectl</code> on your machine.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {WORKFLOWS.map((m) => (
                 <button
                   key={m.id}
                   type="button"
@@ -212,44 +284,103 @@ export default function ClusterConnect() {
                   }`}
                 >
                   <span className="text-2xl block mb-2">{m.icon}</span>
-                  <span className="font-mono text-sm block">{m.label}</span>
-                  <span className="text-xs mt-1 opacity-80">{m.desc}</span>
+                  <span className="font-mono text-sm font-medium block">{m.title}</span>
+                  <span className="text-xs mt-0.5 block opacity-90">{m.subtitle}</span>
+                  <span className="text-xs mt-2 block opacity-75">Best for: {m.bestFor}</span>
                 </button>
               ))}
             </div>
-            {method === 'paste' && (
-              <div className="space-y-3 rounded border border-border bg-surface2 p-4">
+
+            {method && (
+              <div className="rounded-lg border border-border bg-surface2 p-4 space-y-4">
+                <p className="text-xs font-mono text-accent uppercase tracking-wider">Do this:</p>
+                <ul className="text-sm text-muted space-y-1 list-decimal list-inside">
+                  {getMethodInstructions().map((line, i) => (
+                    <li key={i}>
+                      {line.startsWith('kubectl') ? (
+                        <code className="bg-bg px-1.5 py-0.5 rounded text-white text-xs">{line}</code>
+                      ) : (
+                        line
+                      )}
+                    </li>
+                  ))}
+                </ul>
+
                 <div>
-                  <label className="block text-xs font-mono text-muted mb-1">Cluster name</label>
+                  <label className="block text-xs font-mono text-muted mb-1">Cluster name (for display)</label>
                   <input
                     type="text"
                     value={clusterName}
                     onChange={(e) => setClusterName(e.target.value)}
-                    className="w-full rounded border border-border bg-surface px-3 py-2 text-white font-mono"
-                    placeholder="minikube"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-mono text-muted mb-1">Kubeconfig YAML (paste from: kubectl config view --minify --raw)</label>
-                  <textarea
-                    value={kubeconfigPaste}
-                    onChange={(e) => setKubeconfigPaste(e.target.value)}
-                    placeholder="apiVersion: v1\nclusters:\n  - cluster:\n      server: https://..."
-                    rows={8}
                     className="w-full rounded border border-border bg-surface px-3 py-2 text-white font-mono text-sm"
+                    placeholder={method === 'context' ? 'e.g. kind-demo' : 'e.g. my-cluster'}
                   />
                 </div>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={useDockerHost}
-                    onChange={(e) => setUseDockerHost(e.target.checked)}
-                    className="rounded border-border"
-                  />
-                  <span className="text-sm font-mono text-muted">App is running in Docker (use host.docker.internal so the container can reach Minikube/Kind)</span>
-                </label>
+
+                {method === 'paste' && (
+                  <>
+                    <div>
+                      <label className="block text-xs font-mono text-muted mb-1">Paste kubeconfig YAML here</label>
+                      <textarea
+                        value={kubeconfigPaste}
+                        onChange={(e) => setKubeconfigPaste(e.target.value)}
+                        placeholder="Paste the output of kubectl config view --minify --raw"
+                        rows={6}
+                        className="w-full rounded border border-border bg-surface px-3 py-2 text-white font-mono text-xs"
+                      />
+                    </div>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={useDockerHost}
+                        onChange={(e) => setUseDockerHost(e.target.checked)}
+                        className="rounded border-border"
+                      />
+                      <span className="text-sm text-muted">App runs in Docker (cluster is on the same machine)</span>
+                    </label>
+                  </>
+                )}
+
+                {method === 'kubeconfig' && (
+                  <>
+                    <div>
+                      <label className="block text-xs font-mono text-muted mb-1">Path to kubeconfig file</label>
+                      <input
+                        type="text"
+                        value={kubeconfigPath}
+                        onChange={(e) => setKubeconfigPath(e.target.value)}
+                        className="w-full rounded border border-border bg-surface px-3 py-2 text-white font-mono text-sm"
+                        placeholder="~/.kube/config or /path/to/config"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-mono text-muted mb-1">Context name (optional)</label>
+                      <input
+                        type="text"
+                        value={contextName}
+                        onChange={(e) => setContextName(e.target.value)}
+                        className="w-full rounded border border-border bg-surface px-3 py-2 text-white font-mono text-sm"
+                        placeholder="Leave blank for current context"
+                      />
+                    </div>
+                  </>
+                )}
+
+                {method === 'context' && (
+                  <div>
+                    <label className="block text-xs font-mono text-muted mb-1">Context name (from kubectl config current-context)</label>
+                    <input
+                      type="text"
+                      value={contextName}
+                      onChange={(e) => setContextName(e.target.value)}
+                      className="w-full rounded border border-border bg-surface px-3 py-2 text-white font-mono text-sm"
+                      placeholder="e.g. kind-demo, minikube"
+                    />
+                  </div>
+                )}
               </div>
             )}
+
             <div className="flex gap-2">
               <button
                 type="button"
@@ -261,89 +392,48 @@ export default function ClusterConnect() {
               <button
                 type="button"
                 onClick={handleNextFromMethod}
-                disabled={!method || (method === 'paste' && !kubeconfigPaste.trim())}
+                disabled={!canProceedFromStep2()}
                 className="px-4 py-2 rounded bg-accent text-bg font-mono font-semibold hover:opacity-90 disabled:opacity-50"
               >
-                NEXT →
+                Save & test connection →
               </button>
             </div>
           </>
         )}
 
+        {/* Step 3: Test */}
         {step === 3 && (
           <>
-            <h2 className="font-mono font-semibold text-white">Configure & Test</h2>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-xs font-mono text-muted mb-1">Cluster Name</label>
-                <input
-                  type="text"
-                  value={clusterName}
-                  onChange={(e) => setClusterName(e.target.value)}
-                  className="w-full rounded border border-border bg-surface2 px-3 py-2 text-white font-mono"
-                  placeholder="minikube"
-                />
-              </div>
-              {method === 'paste' && (
-                <p className="text-xs text-muted">Kubeconfig was saved. Test the connection below.</p>
-              )}
-              {method === 'kubeconfig' && (
-                <div>
-                  <label className="block text-xs font-mono text-muted mb-1">Kubeconfig Path</label>
-                  <input
-                    type="text"
-                    value={kubeconfigPath}
-                    onChange={(e) => setKubeconfigPath(e.target.value)}
-                    className="w-full rounded border border-border bg-surface2 px-3 py-2 text-white font-mono"
-                    placeholder="~/.kube/config"
-                  />
-                </div>
-              )}
-              {(method === 'context' || method === 'kubeconfig') && method !== 'paste' && (
-                <div>
-                  <label className="block text-xs font-mono text-muted mb-1">Context (optional)</label>
-                  <input
-                    type="text"
-                    value={contextName}
-                    onChange={(e) => setContextName(e.target.value)}
-                    className="w-full rounded border border-border bg-surface2 px-3 py-2 text-white font-mono"
-                    placeholder={method === 'context' ? 'kind-kubememory-prod-sim' : ''}
-                  />
-                </div>
-              )}
-              {method === 'context' && (
-                <p className="text-xs text-muted">
-                  Kubeconfig will be loaded from ~/.kube/config (context: {contextName || `kind-${clusterName}`})
-                </p>
-              )}
-            </div>
+            <h2 className="font-mono font-semibold text-white">Test connection</h2>
+            <p className="text-muted text-sm">
+              Cluster &quot;{clusterName || 'my-cluster'}&quot; is configured. Verify we can reach it.
+            </p>
             <button
               type="button"
               onClick={handleTestConnection}
               disabled={testing || !clusterId}
               className="px-4 py-2 rounded border border-accent text-accent font-mono text-sm hover:bg-accent/10 disabled:opacity-50"
             >
-              {testing ? 'Testing…' : 'TEST CONNECTION'}
+              {testing ? 'Testing…' : 'Test connection'}
             </button>
             {testError && (
               <div className="rounded border border-red-500/50 bg-red-500/10 p-4 text-sm">
-                <p className="font-mono text-red-400 font-semibold">✗ Connection Failed</p>
+                <p className="font-mono text-red-400 font-semibold">✗ Connection failed</p>
                 <p className="text-muted mt-1">{testError}</p>
                 <p className="text-xs text-muted mt-2">Common fixes:</p>
                 <ul className="list-disc list-inside text-xs text-muted mt-1">
-                  <li>Is Docker running? docker ps</li>
-                  <li>Is your cluster up? kind get clusters</li>
-                  <li>Check kubeconfig: kubectl config current-context</li>
+                  <li>Cluster running? (e.g. kind get clusters, kubectl get nodes)</li>
+                  <li>Correct context? kubectl config current-context</li>
+                  <li>If app is in Docker: use Paste kubeconfig with &quot;App runs in Docker&quot; checked</li>
                 </ul>
               </div>
             )}
             {testResult?.connected && (
               <div className="rounded border border-accent/50 bg-accent/10 p-4 text-sm">
-                <p className="font-mono text-accent font-semibold">✓ Connected!</p>
+                <p className="font-mono text-accent font-semibold">✓ Connected</p>
                 <p className="text-muted mt-1">
-                  {testResult.node_count} nodes • K8s {testResult.server_version || 'unknown'}
+                  {testResult.node_count} nodes · K8s {testResult.server_version || 'unknown'}
                 </p>
-                <p className="text-xs text-muted mt-1">Permissions verified (read-only)</p>
               </div>
             )}
             <div className="flex gap-2">
@@ -352,7 +442,7 @@ export default function ClusterConnect() {
                 onClick={() => setStep(2)}
                 className="px-3 py-1.5 rounded border border-border text-muted font-mono text-sm"
               >
-                ← BACK
+                ← Back
               </button>
               <button
                 type="button"
@@ -360,17 +450,19 @@ export default function ClusterConnect() {
                 disabled={!testResult?.connected}
                 className="px-4 py-2 rounded bg-accent text-bg font-mono font-semibold hover:opacity-90 disabled:opacity-50"
               >
-                NEXT →
+                Choose namespaces →
               </button>
             </div>
           </>
         )}
 
+        {/* Step 4: Namespaces + Start */}
         {step === 4 && (
           <>
-            <h2 className="font-mono font-semibold text-white">Which namespaces should KubeMemory watch?</h2>
+            <h2 className="font-mono font-semibold text-white">Which namespaces to watch?</h2>
+            <p className="text-muted text-sm">We’ll only read events from these. Avoid kube-system (noisy).</p>
             {loadingNamespaces ? (
-              <p className="text-muted">Loading namespaces…</p>
+              <p className="text-muted">Loading…</p>
             ) : (
               <div className="space-y-2">
                 {namespaces.map((ns) => (
@@ -381,22 +473,19 @@ export default function ClusterConnect() {
                       onChange={() => toggleNamespace(ns)}
                       className="rounded border-border"
                     />
-                    <span className="font-mono text-sm text-white">
-                      {ns}
-                      {ns === 'kube-system' && ' (system — not recommended)'}
-                    </span>
+                    <span className="font-mono text-sm text-white">{ns}</span>
+                    {ns === 'kube-system' && <span className="text-xs text-muted">(not recommended)</span>}
                   </label>
                 ))}
               </div>
             )}
-            <p className="text-xs text-muted">Tip: Avoid kube-system — high noise, low signal</p>
             <div className="flex gap-2">
               <button
                 type="button"
                 onClick={() => setStep(3)}
                 className="px-3 py-1.5 rounded border border-border text-muted font-mono text-sm"
               >
-                ← BACK
+                ← Back
               </button>
               <button
                 type="button"
@@ -404,7 +493,7 @@ export default function ClusterConnect() {
                 disabled={connecting || selectedNamespaces.length === 0}
                 className="px-4 py-2 rounded bg-accent text-bg font-mono font-semibold hover:opacity-90 disabled:opacity-50"
               >
-                {connecting ? 'Connecting…' : 'START WATCHING ✓'}
+                {connecting ? 'Connecting…' : 'Start watching'}
               </button>
             </div>
           </>

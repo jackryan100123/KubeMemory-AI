@@ -91,9 +91,7 @@ Never commit `.env` — it's in `.gitignore`.
 
 ## More Documentation
 
-- **[Step-by-Step: Real Time on Linux](docs/REALTIME_LINUX_QUICKSTART.md)** — clone, Kind cluster, real-time alerts
-- **[How to Connect Your Cluster](docs/CLUSTER_CONNECT.md)** — Connect wizard or manual setup
-- **[Connectivity In Depth](docs/CONNECTIVITY_IN_DEPTH.md)** — network and connectivity details
+- **[Connect Your Cluster](docs/CLUSTER_CONNECT.md)** — all connection workflows (paste, file path, context, in-cluster), step-by-step and troubleshooting
 
 ## License
 

@@ -7,6 +7,7 @@ import logging
 import os
 import shutil
 import subprocess
+import sys
 import threading
 from pathlib import Path
 from typing import Any
@@ -18,9 +19,10 @@ _watcher_process: subprocess.Popen | None = None
 _watcher_cluster_id: int | None = None
 _lock = threading.Lock()
 
-# Paths (container defaults)
+# Paths (container defaults). Use a writable path for active config so we don't write to
+# a read-only mount (e.g. docker-compose mounts ./kubeconfig at /app/.kube/config:ro).
 KUBECONFIGS_DIR = Path(os.environ.get("KUBEMEMORY_KUBECONFIGS_DIR", "/app/kubeconfigs"))
-ACTIVE_KUBECONFIG_PATH = Path(os.environ.get("K8S_KUBECONFIG_PATH", "/app/.kube/config"))
+ACTIVE_KUBECONFIG_PATH = Path(os.environ.get("KUBEMEMORY_ACTIVE_KUBECONFIG") or str(KUBECONFIGS_DIR / "active.config"))
 
 
 def _ensure_kubeconfigs_dir() -> None:
@@ -61,7 +63,7 @@ def write_cluster_kubeconfig(cluster_id: int, content: str, use_docker_host: boo
 
 def activate_cluster_config(cluster_id: int, namespaces: list[str]) -> bool:
     """
-    Copy the cluster's kubeconfig to the active path and return True if the file existed.
+    Copy the cluster's kubeconfig to the writable active path and return True if the file existed.
     Does not start the watcher; call start_watcher after this.
     """
     src = get_cluster_kubeconfig_path(cluster_id)
@@ -69,7 +71,7 @@ def activate_cluster_config(cluster_id: int, namespaces: list[str]) -> bool:
         logger.warning("Cluster %s kubeconfig not found at %s", cluster_id, src)
         return False
     dest = ACTIVE_KUBECONFIG_PATH
-    dest.parent.mkdir(parents=True, exist_ok=True)
+    _ensure_kubeconfigs_dir()  # ensure dest.parent exists and is writable
     shutil.copy2(src, dest)
     logger.info("Activated kubeconfig for cluster %s -> %s", cluster_id, dest)
     return True
@@ -94,9 +96,11 @@ def start_watcher(cluster_id: int, namespaces: list[str]) -> dict[str, Any]:
         env["K8S_KUBECONFIG_PATH"] = str(ACTIVE_KUBECONFIG_PATH)
         env["K8S_NAMESPACES"] = ",".join(namespaces) if namespaces else "default"
         try:
+            # Use writable dir that contains manage.py (e.g. /app in Docker, or backend/ locally)
+            cwd = Path("/app") if Path("/app/manage.py").exists() else Path(os.getcwd())
             _watcher_process = subprocess.Popen(
-                ["python", "manage.py", "run_watcher"],
-                cwd="/app",
+                [sys.executable, "manage.py", "run_watcher"],
+                cwd=str(cwd),
                 env=env,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,

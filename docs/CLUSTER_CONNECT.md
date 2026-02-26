@@ -1,208 +1,238 @@
-# How to Connect Your Cluster to KubeMemory
+# Connect Your Cluster to KubeMemory
 
-KubeMemory's watcher needs read-only access to your cluster.
-Here's exactly how to set it up for each scenario.
+This guide explains **all four connection workflows** in depth: when to use each, how they work, and how to connect from start to finish.
 
-**For a deep dive** (how connectivity works, Kind + 1 worker + nginx in `default`, watcher on host vs in Docker), see **[Connectivity In Depth](CONNECTIVITY_IN_DEPTH.md)**.
-
----
-
-## Linux: step-by-step (Docker + Kind + watcher)
-
-Run these on an Ubuntu (or other Linux) host, from the project root, in order:
-
-| Step | Command | What it does |
-|------|----------|----------------|
-| 1 | `git pull` | Get latest (includes Kind config that exposes API on 0.0.0.0). |
-| 2 | `kind delete cluster --name kubememory-prod-sim` | Remove old cluster if it existed (so we get the new API bind). |
-| 3 | `cd k8s/prod-sim && ./bootstrap.sh` | Create Kind cluster (1 control-plane + 3 workers + namespaces). |
-| 4 | `cd ../..` | Back to project root. |
-| 5 | (see code block below) | Kubeconfig for the container (host.docker.internal:6443). |
-| 6 | `docker compose down && docker compose up -d` | Start stack; django-api gets `kubeconfig` and `host.docker.internal`. |
-| 7 | `docker compose exec django-api python manage.py migrate` | Apply DB migrations. |
-| 8 | `make watcher` | Run watcher inside container; should connect and watch namespaces. |
-
-**Step 5 — copy and run this as one line (use a single pipe `|`, no backslash):**
-
-```bash
-kind get kubeconfig --name kubememory-prod-sim | sed -e 's/127\.0\.0\.1/host.docker.internal/g' -e 's/0\.0\.0\.0/host.docker.internal/g' -e '/server: https:\/\/host.docker.internal/a\    insecure-skip-tls-verify: true' > kubeconfig
-```
-
-- Kind writes the API server as `0.0.0.0` when you set `apiServerAddress: "0.0.0.0"`; the container must use `host.docker.internal`, so both are replaced.
-- The Kind API server certificate is not issued for `host.docker.internal`, so we add `insecure-skip-tls-verify: true` for this local Docker-only kubeconfig.
-
-**Docker permission (Linux):** If you get `permission denied` on the Docker socket, either run the commands above with `sudo`, or add your user to the `docker` group so you don’t need sudo: `sudo usermod -aG docker $USER`, then log out and back in (or `newgrp docker`).
-
-**Host `kubectl` without sudo:** If `kubectl` says "connection to 127.0.0.1:34083 refused", your user’s kubeconfig is pointing at an old port. Use the cluster’s API on the host (no `host.docker.internal`): `sudo kind get kubeconfig --name kubememory-prod-sim > ~/.kube/config` then `sudo chown $USER:$USER ~/.kube/config`. That gives you `127.0.0.1:6443` for host-side `kubectl`.
-
-If step 8 fails with **Connection refused**, ensure you recreated the cluster (steps 2–3) and that step 5 replaced both `127.0.0.1` and `0.0.0.0` with `host.docker.internal`.
+KubeMemory needs **read-only** access to your cluster (events, pods, namespaces, pod logs for context). It never modifies or deletes resources and never accesses secrets.
 
 ---
 
-## Option A — Local Kind Cluster (Recommended for Testing)
+## Overview: Four connection workflows
 
-### Step 1: Create the cluster
+| Workflow | When to use it | What you provide |
+|----------|----------------|------------------|
+| **Paste kubeconfig** | You have an existing cluster and can run `kubectl` (Kind, Minikube, any cluster). Easiest when the app runs in Docker. | Cluster name + pasted YAML from `kubectl config view --minify --raw`. Option: “App runs in Docker” so we rewrite the API server for the container. |
+| **Kubeconfig file path** | You have a config file (e.g. from cloud CLI or a custom path). The app process can read that path. | Cluster name + path (e.g. `~/.kube/config`, `/path/to/gke-config.yaml`). Optional: context name. |
+| **Use default kubeconfig** | `kubectl` already works; the backend runs where it can read the default kubeconfig (e.g. host or container with `~/.kube/config` mounted). | Cluster name + context name from `kubectl config current-context`. |
+| **In-cluster** | KubeMemory runs **inside** the cluster (e.g. as a pod). No kubeconfig file needed. | Cluster name only. The app uses the in-cluster service account. |
 
-```bash
-cd k8s/prod-sim
-./bootstrap.sh
-```
+In the UI: open **Connect Cluster** and choose one of these; the wizard shows workflow-specific instructions.
 
-### Step 2: Verify kubeconfig
+---
 
-```bash
-kubectl config current-context
-# Should show: kind-kubememory-prod-sim
+## Workflow 1: Paste kubeconfig (in depth)
 
-kubectl get nodes
-# Should show 4 nodes (1 control-plane + 3 workers)
-```
+### When to use
 
-### Step 3: Set env vars
+- You have **any** cluster (Kind, Minikube, EKS, GKE, AKS, on-prem) and can run `kubectl` on your machine.
+- You prefer **not** to deal with file paths or mounting; you copy config once and paste.
+- The app often runs **in Docker** on the same host as the cluster (or another host); we can rewrite the API server address so the container can reach the cluster.
 
-In your `.env` file:
+### How it works
 
-```
-K8S_IN_CLUSTER=False
-K8S_KUBECONFIG_PATH=/Users/yourname/.kube/config
-K8S_NAMESPACES=production,staging,data-pipeline
-```
+1. You paste the **full YAML** from `kubectl config view --minify --raw`.
+2. The backend saves it to a **writable file** per cluster (e.g. `/app/kubeconfigs/cluster_<id>.config`). We never store the raw content in the database.
+3. If you check **“App runs in Docker”**, we:
+   - Replace `127.0.0.1` and `0.0.0.0` in the `server:` URL with `host.docker.internal` so the container can reach the host’s cluster.
+   - Add `insecure-skip-tls-verify: true` under that server (needed for local clusters whose cert isn’t for `host.docker.internal`).
+4. When you click **Start watching**, we copy that cluster’s file to the active watcher path and start the watcher subprocess. No manual `docker exec` or terminal watcher needed.
 
-**If you run the app in Docker** (e.g. `docker compose up` and `make watcher`), the watcher runs *inside* the `django-api` container and cannot see your host `~/.kube/config`. Do this instead:
+### Step-by-step
 
-1. **Use a Kind cluster that exposes the API server on all interfaces** (required on Linux so the container can reach it via `host.docker.internal`). The prod-sim config `k8s/prod-sim/kind-cluster.yaml` already sets `networking.apiServerAddress: "0.0.0.0"` and `apiServerPort: 6443`. If you created the cluster *before* this was added, delete and recreate:
-
+1. **Terminal:** Get kubeconfig for the context you use:
    ```bash
-   kind delete cluster --name kubememory-prod-sim
-   cd k8s/prod-sim && ./bootstrap.sh
+   kubectl config view --minify --raw
    ```
+   Copy the **entire** output.
 
-2. **Create a kubeconfig the container can use** (from your project root, same machine where Kind runs). Replace host with `host.docker.internal` and skip TLS verify (Kind’s cert isn’t for that hostname):
+2. **Browser:** Open the app → **Connect Cluster** → **Choose how to connect** → **Paste kubeconfig**.
 
+3. **UI:**  
+   - **Cluster name:** Any label (e.g. `demo`, `prod-sim`).  
+   - **Paste kubeconfig YAML here:** Paste what you copied.  
+   - **App runs in Docker:** Check this if KubeMemory runs in Docker and the cluster is on the same machine (or the host that Docker uses).  
+   Click **Save & test connection**.
+
+4. **UI:** Click **Test connection**. If it fails, see troubleshooting below.
+
+5. **UI:** Click **Choose namespaces** → select namespaces → **Start watching**. The watcher starts automatically.
+
+### Important for local clusters (Kind / Minikube) when app is in Docker
+
+- The cluster’s API server must be reachable from the container. By default, Kind/Minikube bind the API to `127.0.0.1`; from inside a container, `127.0.0.1` is the container itself, so connection fails.
+- **Fix:** Create the cluster so the API listens on **0.0.0.0** (all interfaces). For Kind, use a config with `networking.apiServerAddress: "0.0.0.0"` (and optionally `apiServerPort: 6443`), then recreate the cluster. After that, “App runs in Docker” + paste works.
+
+### Troubleshooting
+
+| Symptom | What to do |
+|--------|------------|
+| Test connection: **Connection refused** to `host.docker.internal` | Cluster API is still bound to 127.0.0.1. Recreate cluster with API on 0.0.0.0 (Kind: use a config with `apiServerAddress: "0.0.0.0"`). Then get kubeconfig again and paste with “App runs in Docker” checked. |
+| Test connection: **Certificate / TLS** error | Ensure “App runs in Docker” is checked so we add `insecure-skip-tls-verify: true` for local clusters. |
+| Start watching: **500 or watcher didn’t start** | Backend writes the active kubeconfig to a writable path (e.g. `/app/kubeconfigs/active.config`). Ensure the app has write access to that directory; check backend logs. |
+
+---
+
+## Workflow 2: Kubeconfig file path (in depth)
+
+### When to use
+
+- You have a **path** to a kubeconfig file (e.g. `~/.kube/config`, or a file from `aws eks update-kubeconfig`, `gcloud container clusters get-credentials`, or a custom file).
+- The KubeMemory **backend process** can read that path (same host, or the path is mounted into the container).
+
+### How it works
+
+1. You give a **path** (and optionally a **context** name). The backend does not read the file at create time; it stores the path and context.
+2. When you **Test connection** or when the **watcher** runs, the backend loads kubeconfig from that path and uses the given context (or current context if blank).
+3. If the app runs in Docker, the path must be **inside the container** (e.g. `/app/.kube/config` for a mounted file). The project’s `docker-compose` can mount a host file (e.g. `./kubeconfig:/app/.kube/config`); then you’d use path `/app/.kube/config` or the backend’s default.
+
+### Step-by-step
+
+1. **Get kubeconfig on the host** (if needed):
+   - **Kind:** `kind get kubeconfig --name <name> > kubeconfig` (then optionally sed for Docker; see below).
+   - **EKS:** `aws eks update-kubeconfig --name <cluster> --region <region>` (writes to `~/.kube/config`).
+   - **GKE:** `gcloud container clusters get-credentials <cluster> --region <region>`.
+   - **AKS:** `az aks get-credentials --resource-group <rg> --name <cluster>`.
+
+2. **If the app runs in Docker** and the cluster is on the same host (Kind/Minikube), create a kubeconfig the container can use (project root):
    ```bash
-   kind get kubeconfig --name kubememory-prod-sim | sed -e 's/127\.0\.0\.1/host.docker.internal/g' -e 's/0\.0\.0\.0/host.docker.internal/g' -e '/server: https:\/\/host.docker.internal/a\    insecure-skip-tls-verify: true' > kubeconfig
+   kind get kubeconfig --name <cluster-name> | \
+     sed -e 's/127.0.0.1/host.docker.internal/g' \
+         -e 's/0.0.0.0/host.docker.internal/g' \
+         -e '/server: https:\/\/host.docker.internal/a\    insecure-skip-tls-verify: true' \
+     > kubeconfig
    ```
+   Then ensure `docker-compose` mounts `./kubeconfig` to the path the app uses (e.g. `/app/.kube/config`).
 
-   (Use your actual Kind cluster name if different, e.g. `kubememory` for `k8s/kind-cluster.yaml`. With prod-sim the API server will be on port 6443.)
+3. **Browser:** Connect Cluster → **Kubeconfig file path**.
 
-3. **Restart the stack** so the `django-api` container gets the mounted kubeconfig and `host.docker.internal`:
+4. **UI:**  
+   - **Cluster name:** Any label.  
+   - **Path to kubeconfig file:** Path **as seen by the backend** (e.g. `~/.kube/config` on host, or `/app/.kube/config` in container).  
+   - **Context name (optional):** Leave blank for current context, or set e.g. `kind-demo`.  
+   Click **Save & test connection** → **Test connection** → **Choose namespaces** → **Start watching**.
 
+### Troubleshooting
+
+| Symptom | What to do |
+|--------|------------|
+| **Kubeconfig not found** / No configuration | The path is wrong for the process (e.g. host path used but watcher runs in container). Use a path the backend/watcher can read, or use **Paste kubeconfig** and paste the file contents. |
+| **Connection refused** (Docker) | From inside the container, the API server address in the kubeconfig must be the host (e.g. `host.docker.internal`), not `127.0.0.1`. Create the kubeconfig with the sed above or use Paste with “App runs in Docker”. |
+
+---
+
+## Workflow 3: Use default kubeconfig (context) (in depth)
+
+### When to use
+
+- **kubectl** already works (e.g. you’ve run `kind create cluster` or a cloud get-credentials).
+- The KubeMemory backend runs where it can read the **default** kubeconfig (e.g. `~/.kube/config` or `KUBECONFIG`). Typical: backend on the **host** (not in Docker), or Docker with `~/.kube` mounted and path set to that file.
+
+### How it works
+
+1. You provide only a **context name** (from `kubectl config current-context`). The backend uses the default kubeconfig path from the environment (or `~/.kube/config`) and loads that context.
+2. No file content is pasted; no custom path is required beyond the default.
+
+### Step-by-step
+
+1. **Terminal:** Get current context:
    ```bash
-   docker compose down
-   docker compose up -d
+   kubectl config current-context
    ```
+   Example: `kind-demo`, `minikube`, `gke_my-project_us-central1_my-cluster`.
 
-4. **Start the watcher** (runs inside the container; it will use `/app/.kube/config`):
+2. **Browser:** Connect Cluster → **Use default kubeconfig**.
 
-   ```bash
-   make watcher
-   ```
+3. **UI:**  
+   - **Cluster name:** Any label.  
+   - **Context name:** The value from step 1.  
+   Click **Save & test connection** → **Test connection** → **Choose namespaces** → **Start watching**.
 
-`K8S_KUBECONFIG_PATH` is already set in `docker-compose.yml` to `/app/.kube/config`. The file `kubeconfig` in the project root is mounted there and is in `.gitignore`.
+### Troubleshooting
 
-### Step 4: Start watcher (when not using Docker)
-
-```bash
-make watcher
-# You should see:
-# [watcher] Connected to kind-kubememory-prod-sim
-# [watcher] Watching namespaces: production, staging, data-pipeline
-# [watcher] Event captured: CrashLoopBackOff on payment-service
-```
+| Symptom | What to do |
+|--------|------------|
+| **Kubeconfig not found** | Backend has no default kubeconfig (e.g. no `~/.kube/config` in container). Run backend where that file exists, or mount it and set path, or use **Paste kubeconfig**. |
+| **Connection refused** (Docker) | Default kubeconfig usually points to 127.0.0.1. From inside Docker that doesn’t reach the host. Use **Paste kubeconfig** with “App runs in Docker” instead. |
 
 ---
 
-## Option B — Remote Cluster (EKS / GKE / AKS)
+## Workflow 4: In-cluster (in depth)
 
-### Step 1: Get your kubeconfig
+### When to use
 
-```bash
-# EKS
-aws eks update-kubeconfig --name my-cluster --region us-east-1
+- KubeMemory is **deployed inside** the cluster (e.g. as a Deployment with a ServiceAccount).
+- No kubeconfig file is needed; the API server and CA are provided by the cluster, and the pod uses the service account token.
 
-# GKE
-gcloud container clusters get-credentials my-cluster --region us-central1
+### How it works
 
-# AKS
-az aks get-credentials --resource-group my-rg --name my-cluster
-```
+1. You choose **In-cluster** and give only a **cluster name** (for display).
+2. The backend sets `connection_method` to `in_cluster`. When testing or running the watcher, it uses `load_incluster_config()` (Kubernetes client loads the pod’s service account and cluster env).
+3. RBAC must allow the service account to list/watch events and get/list pods and namespaces (read-only). Use the project’s in-cluster RBAC manifests if available.
 
-### Step 2: Apply RBAC (read-only)
+### Step-by-step
 
-```bash
-kubectl apply -f k8s/rbac.yaml
-kubectl apply -f k8s/serviceaccount.yaml
-```
+1. **Cluster:** Deploy KubeMemory (e.g. apply manifests that create ServiceAccount, RBAC, Deployment). Ensure the pod has the usual in-cluster env (no kubeconfig mount).
 
-### Step 3: Verify permissions
+2. **Browser:** Connect Cluster → **In-cluster**.
 
-```bash
-kubectl auth can-i list pods --as=system:serviceaccount:default:kubememory-watcher
-# Should say: yes
+3. **UI:**  
+   - **Cluster name:** Any label (e.g. `production`).  
+   Click **Save & test connection** → **Test connection** → **Choose namespaces** → **Start watching**.
 
-kubectl auth can-i delete pods --as=system:serviceaccount:default:kubememory-watcher
-# Should say: no  ← this is correct, we have no write access
-```
+### Troubleshooting
 
-### Step 4: Set env vars
-
-```
-K8S_IN_CLUSTER=False
-K8S_KUBECONFIG_PATH=/Users/yourname/.kube/config
-K8S_NAMESPACES=production,staging
-```
+| Symptom | What to do |
+|--------|------------|
+| **Not running in cluster** / in-cluster config failed | This workflow only works when the app process runs inside a Kubernetes pod. If you’re on a host or in Docker, use one of the other workflows. |
+| **Forbidden** | Service account needs read-only RBAC (list/watch events, get/list pods and namespaces). Apply the correct ClusterRole/ClusterRoleBinding (or namespace-scoped Role/RoleBinding). |
 
 ---
 
-## Option C — In-Cluster (Deploy KubeMemory as a Pod)
+## Full flow: Create a cluster → Connect (example with Kind)
 
-Use this when you want KubeMemory to run INSIDE the cluster itself.
+Do these in order.
 
-```bash
-# Apply the service account with in-cluster RBAC
-kubectl apply -f k8s/in-cluster-rbac.yaml
+| # | Where | What to do |
+|---|--------|------------|
+| 1 | Terminal | Create Kind cluster with API on 0.0.0.0 so Docker can reach it: e.g. create a config with `networking.apiServerAddress: "0.0.0.0"` and `apiServerPort: 6443`, then `kind create cluster --config <config>.yaml`. Or use project `k8s/prod-sim/kind-cluster.yaml`. |
+| 2 | Terminal | Run workloads: `kubectl create deployment nginx --image=nginx --replicas=3`, then `kubectl get pods`. |
+| 3 | Terminal | Start KubeMemory: from project root, `docker compose up -d`. |
+| 4 | Browser | Open app (e.g. http://localhost:5173) → **Connect Cluster**. |
+| 5 | UI | **Choose how to connect** → **Paste kubeconfig**. Run `kubectl config view --minify --raw`, copy all, paste in the box. Set cluster name. Check **App runs in Docker**. **Save & test connection**. |
+| 6 | UI | **Test connection** → **Choose namespaces** → **Start watching**. |
+| 7 | Done | Dashboard; watcher is running. Incidents appear when events occur. |
 
-# Set in .env:
-K8S_IN_CLUSTER=True
-```
-
-The watcher will auto-discover the cluster via the mounted service account token.
-
----
-
-## Verifying Events Are Flowing
-
-After connecting, check:
-
-```bash
-# 1. Watcher shows events
-make watcher
-# → [watcher] CrashLoopBackOff: payment-service (production)
-
-# 2. API has incidents
-curl http://localhost:8000/api/incidents/ | python -m json.tool
-
-# 3. Dashboard shows live feed
-# Open http://localhost:5173 — you should see red alerts
-
-# 4. Memory is populated
-make verify-memory
-# ✓ ChromaDB: N documents
-# ✓ Neo4j: N incidents in graph
-```
+If **Test connection** fails with connection refused, recreate the cluster with the API on 0.0.0.0, then paste again with “App runs in Docker” checked.
 
 ---
 
-## Troubleshooting
+## Quick reference
 
-| Error | Fix |
-|-------|-----|
-| `Invalid kube-config file. No configuration found` | Watcher is running in Docker and has no kubeconfig. Create `kubeconfig` in project root: `kind get kubeconfig ... | sed -e 's/127\.0\.0\.1/host.docker.internal/g' -e 's/0\.0\.0\.0/host.docker.internal/g' -e '/server: https:\/\/host.docker.internal/a\    insecure-skip-tls-verify: true' > kubeconfig`, then `docker compose up -d` and `make watcher`. |
-| `Connection refused` to `host.docker.internal` (e.g. port 34083) | On Linux, Kind’s API server is bound to 127.0.0.1 by default, so the container cannot reach it. Recreate the cluster with the prod-sim config that sets `networking.apiServerAddress: "0.0.0.0"` (see Option A step 3), then regenerate `kubeconfig` and restart compose. |
-| `SSL: CERTIFICATE_VERIFY_FAILED` / `certificate is not valid for 'host.docker.internal'` | Kind’s API server cert is for a different hostname. Regenerate `kubeconfig` with the sed that adds `insecure-skip-tls-verify: true` (see Step 5 in the Linux section). |
-| `connection refused at 6443` | Docker not running or cluster stopped. Run `kind get clusters` |
-| `Forbidden: pods is forbidden` | RBAC not applied. Run `kubectl apply -f k8s/rbac.yaml` |
-| `no such file: ~/.kube/config` | Kubeconfig missing. Run the appropriate cloud CLI command above |
-| `watcher connects but no events` | Pods are healthy. Apply test workloads: `kubectl apply -f k8s/prod-sim/workloads/` |
-| **UI "Test connection" fails** (Docker) | Backend uses the cluster’s kubeconfig path; in Docker it falls back to `K8S_KUBECONFIG_PATH` (/app/.kube/config). Ensure the project root `kubeconfig` file exists (Step 5), then restart: `docker compose up -d --build django-api` and try again. |
-| `Ollama not responding` | Run `docker compose up ollama` and wait for model pull to finish |
+| Workflow | Get config / context | In UI |
+|----------|----------------------|--------|
+| Paste kubeconfig | `kubectl config view --minify --raw` → copy | Paste YAML, optional “App runs in Docker” |
+| File path | Path backend can read (e.g. `~/.kube/config` or mounted path) | Enter path, optional context |
+| Default kubeconfig | `kubectl config current-context` | Enter context name |
+| In-cluster | None (pod uses service account) | Cluster name only |
+
+---
+
+## Security and what we access
+
+- **We never:** modify or delete resources, create workloads, access secrets, require cluster-admin or write permissions, or store kubeconfig content in the DB (only paths or on-disk files).
+- **We do:** list and watch Events, Pods, Namespaces (read-only); read pod logs when an incident is detected; store incident metadata and embeddings; use kubeconfig only to connect to the API (never logged or exposed).
+- **Recommendation:** Use a dedicated service account with minimal read-only RBAC. Run the app in your own environment; we don’t send cluster data to third parties.
+
+In the app, expand **“Security & what we access”** on the Connect page for the same summary.
+
+---
+
+## Troubleshooting (all workflows)
+
+| Error | Likely cause | Fix |
+|-------|----------------|-----|
+| Connection refused to API server | App in Docker, kubeconfig points to 127.0.0.1 | Use **Paste kubeconfig** with “App runs in Docker”, or create kubeconfig with `host.docker.internal` and `insecure-skip-tls-verify`. For Kind, recreate cluster with `apiServerAddress: "0.0.0.0"`. |
+| Kubeconfig not found | Path wrong or not visible to backend | Use path the backend/watcher can read; or use **Paste kubeconfig**. |
+| Certificate / TLS error | Local cluster cert not for host.docker.internal | Use Paste with “App runs in Docker” so we add `insecure-skip-tls-verify`. |
+| Start watching: 500 / watcher not starting | Backend can’t write active kubeconfig or start subprocess | Ensure writable path for active kubeconfig (e.g. `/app/kubeconfigs`); check backend logs. |
+| Forbidden (RBAC) | Service account or user lacks read permission | Grant list/watch events, get/list pods and namespaces (read-only). Apply `k8s/rbac.yaml` or equivalent. |
+| No events in dashboard | Cluster healthy or namespaces wrong | Trigger an event (e.g. delete a pod); ensure selected namespaces include where workloads run. |

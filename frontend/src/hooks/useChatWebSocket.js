@@ -31,6 +31,7 @@ export function useChatWebSocket(options = {}) {
   const connect = useCallback(() => {
     const raw =
       import.meta.env.VITE_WS_URL ||
+      (import.meta.env.DEV ? 'ws://localhost:8000' : null) ||
       (typeof window !== 'undefined'
         ? `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`
         : 'ws://localhost:8000')

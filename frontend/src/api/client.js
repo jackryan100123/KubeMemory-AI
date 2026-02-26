@@ -1,9 +1,11 @@
 import axios from 'axios'
 
-// When built in Docker, .env is not available — use same origin so nginx can proxy /api to backend
+// When built in Docker, .env is not available — use same origin so nginx can proxy /api to backend.
+// In Vite dev (npm run dev), same-origin is the dev server (5173); prefer explicit backend (8000) if set or in dev.
 const apiBase =
   import.meta.env.VITE_API_URL ||
-  (typeof window !== 'undefined' ? `${window.location.origin}/api` : '/api')
+  (import.meta.env.DEV ? 'http://localhost:8000/api' : null) ||
+  (typeof window !== 'undefined' ? `${window.location.origin}/api` : 'http://localhost:8000/api')
 
 const client = axios.create({
   baseURL: apiBase,
