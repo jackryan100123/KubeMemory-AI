@@ -1,0 +1,15 @@
+# Optional override: attach django-api to the Kind Docker network so "Use Kind network"
+# works without running `docker network connect kind ...` manually.
+# Use only after you have created a Kind cluster (e.g. kind create cluster --name demo).
+# Start with: docker compose -f docker-compose.yml -f docker-compose.kind.yml up -d
+# If the "kind" network does not exist, compose will fail; create a Kind cluster first.
+
+services:
+  django-api:
+    networks:
+      - kubememory-net
+      - kind
+
+networks:
+  kind:
+    external: true

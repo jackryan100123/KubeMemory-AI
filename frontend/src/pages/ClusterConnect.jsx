@@ -38,7 +38,7 @@ const PASTE_INSTRUCTIONS = [
   'In your terminal (where kubectl works), run:',
   'kubectl config view --minify --raw',
   'Copy the entire output, then paste it in the box below.',
-  'If this app runs in Docker and your cluster is on the same machine, check "App runs in Docker".',
+  'If this app runs in Docker: check "App runs in Docker". Connection refused? Use "Use Kind network" (no need to recreate the cluster).',
 ]
 
 const FILE_PATH_INSTRUCTIONS = [
@@ -75,6 +75,8 @@ export default function ClusterConnect() {
   const [connecting, setConnecting] = useState(false)
   const [kubeconfigPaste, setKubeconfigPaste] = useState('')
   const [useDockerHost, setUseDockerHost] = useState(true)
+  const [useKindNetwork, setUseKindNetwork] = useState(false)
+  const [kindClusterName, setKindClusterName] = useState('')
   const [securityInfo, setSecurityInfo] = useState(null)
   const [securityOpen, setSecurityOpen] = useState(false)
 
@@ -142,7 +144,9 @@ export default function ClusterConnect() {
     }
     if (method === 'paste') {
       payload.kubeconfig_content = kubeconfigPaste.trim()
-      payload.use_docker_host = useDockerHost
+      payload.use_docker_host = useDockerHost && !useKindNetwork
+      payload.use_kind_network = useKindNetwork
+      if (useKindNetwork && kindClusterName.trim()) payload.kind_cluster_name = kindClusterName.trim()
     }
     createCluster(payload)
       .then((c) => {
@@ -338,6 +342,34 @@ export default function ClusterConnect() {
                       />
                       <span className="text-sm text-muted">App runs in Docker (cluster is on the same machine)</span>
                     </label>
+                    {useDockerHost && (
+                      <div className="rounded border border-border bg-surface p-3 space-y-2">
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={useKindNetwork}
+                            onChange={(e) => setUseKindNetwork(e.target.checked)}
+                            className="rounded border-border"
+                          />
+                          <span className="text-sm text-accent font-medium">Use Kind network (cluster already on 127.0.0.1? No need to recreate)</span>
+                        </label>
+                        <p className="text-xs text-muted">
+                          Connects via Kind&apos;s Docker network to the control-plane container. Backend must be on that network: run once <code className="bg-bg px-1 rounded">docker network connect kind $(docker compose ps -q django-api)</code>, or start the app with <code className="bg-bg px-1 rounded">docker compose -f docker-compose.yml -f docker-compose.kind.yml up -d</code> (after creating your Kind cluster).
+                        </p>
+                        {useKindNetwork && (
+                          <div>
+                            <label className="block text-xs font-mono text-muted mb-1">Kind cluster name (optional)</label>
+                            <input
+                              type="text"
+                              value={kindClusterName}
+                              onChange={(e) => setKindClusterName(e.target.value)}
+                              className="w-full rounded border border-border bg-surface px-3 py-2 text-white font-mono text-sm"
+                              placeholder="e.g. demo — leave blank to infer from kubeconfig"
+                            />
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </>
                 )}
 
@@ -417,14 +449,15 @@ export default function ClusterConnect() {
               {testing ? 'Testing…' : 'Test connection'}
             </button>
             {testError && (
-              <div className="rounded border border-red-500/50 bg-red-500/10 p-4 text-sm">
+              <div className="rounded border border-red-500/50 bg-red-500/10 p-4 text-sm space-y-3">
                 <p className="font-mono text-red-400 font-semibold">✗ Connection failed</p>
                 <p className="text-muted mt-1">{testError}</p>
-                <p className="text-xs text-muted mt-2">Common fixes:</p>
-                <ul className="list-disc list-inside text-xs text-muted mt-1">
-                  <li>Cluster running? (e.g. kind get clusters, kubectl get nodes)</li>
-                  <li>Correct context? kubectl config current-context</li>
-                  <li>If app is in Docker: use Paste kubeconfig with &quot;App runs in Docker&quot; checked</li>
+                <p className="text-xs text-muted font-medium">What to try:</p>
+                <ul className="list-disc list-inside text-xs text-muted space-y-0.5">
+                  <li>Cluster running? Run <code className="bg-bg px-1 rounded">kubectl get nodes</code> or <code className="bg-bg px-1 rounded">kind get clusters</code></li>
+                  <li>Correct context? <code className="bg-bg px-1 rounded">kubectl config current-context</code></li>
+                  <li>App in Docker + connection refused? Go back → Paste kubeconfig → check <strong className="text-white">Use Kind network</strong>, then attach backend to Kind network: <code className="bg-bg px-1 rounded block mt-1">docker network connect kind $(docker compose ps -q django-api)</code> or use <code className="bg-bg px-1 rounded">docker compose -f docker-compose.yml -f docker-compose.kind.yml up -d</code></li>
+                  <li>Otherwise: use &quot;App runs in Docker&quot; (cluster API must be on 0.0.0.0) or run the app on the host</li>
                 </ul>
               </div>
             )}

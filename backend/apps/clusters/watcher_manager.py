@@ -5,6 +5,7 @@ NEVER logs or stores kubeconfig content — only file paths.
 """
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -36,19 +37,78 @@ def get_cluster_kubeconfig_path(cluster_id: int) -> Path:
     return KUBECONFIGS_DIR / f"cluster_{cluster_id}.config"
 
 
-def write_cluster_kubeconfig(cluster_id: int, content: str, use_docker_host: bool = False) -> Path:
+def _kind_cluster_name_from_kubeconfig(content: str) -> str | None:
+    """
+    Infer Kind cluster name from kubeconfig. Kind uses context names like 'kind-demo'
+    and the control-plane container is '<name>-control-plane'. Returns None if not detected.
+    """
+    # current-context: kind-demo or kind-kubememory-prod-sim
+    match = re.search(r"current-context:\s*(\S+)", content)
+    if match:
+        ctx = match.group(1).strip()
+        if ctx.startswith("kind-"):
+            return ctx[5:].strip() or None  # strip "kind-" prefix
+    # Fallback: cluster name in clusters block often matches (e.g. kind-demo)
+    match = re.search(r"clusters:\s*\n\s*-\s*cluster:.*?name:\s*(\S+)", content, re.DOTALL)
+    if match:
+        name = match.group(1).strip()
+        if name.startswith("kind-"):
+            return name[5:].strip() or None
+    return None
+
+
+def write_cluster_kubeconfig(
+    cluster_id: int,
+    content: str,
+    use_docker_host: bool = False,
+    use_kind_network: bool = False,
+    kind_cluster_name: str | None = None,
+) -> Path:
     """
     Write kubeconfig content to the cluster's file.
-    If use_docker_host is True, replace 127.0.0.1/0.0.0.0 with host.docker.internal
-    and add insecure-skip-tls-verify for the cluster server.
+
+    - If use_docker_host is True (and not use_kind_network): replace 127.0.0.1/0.0.0.0
+      with host.docker.internal and add insecure-skip-tls-verify. Works when the cluster
+      API is bound to 0.0.0.0 so the host can be reached from the container.
+
+    - If use_kind_network is True: rewrite server to https://<name>-control-plane:6443
+      so the app (when attached to the Kind Docker network) talks to the control-plane
+      container directly. No need to recreate the cluster with 0.0.0.0. kind_cluster_name
+      can be provided or inferred from current-context (e.g. kind-demo -> demo).
+
     Returns the path written.
     """
     _ensure_kubeconfigs_dir()
     path = get_cluster_kubeconfig_path(cluster_id)
     text = content
-    if use_docker_host:
-        text = text.replace("127.0.0.1", "host.docker.internal").replace("0.0.0.0", "host.docker.internal")
-        # Add insecure-skip-tls-verify under the cluster server line if not present
+
+    if use_kind_network:
+        name = (kind_cluster_name or "").strip() or _kind_cluster_name_from_kubeconfig(content)
+        if not name:
+            # Fallback: use a safe default so we at least write something
+            name = "kind"
+        host = f"{name}-control-plane"
+        server = f"https://{host}:6443"
+        # Replace server: https://... with our Kind control-plane URL
+        text = re.sub(
+            r"server:\s*https?://[^\s\n]+",
+            f"server: {server}",
+            text,
+            count=1,
+        )
+        # Ensure insecure-skip-tls-verify (Kind cert is for localhost/127.0.0.1)
+        if "insecure-skip-tls-verify" not in text:
+            lines = text.split("\n")
+            out = []
+            for line in lines:
+                out.append(line)
+                if re.match(r"\s*server:\s*", line):
+                    out.append("    insecure-skip-tls-verify: true")
+            text = "\n".join(out)
+    elif use_docker_host:
+        text = text.replace("127.0.0.1", "host.docker.internal").replace(
+            "0.0.0.0", "host.docker.internal"
+        )
         if "insecure-skip-tls-verify" not in text and "host.docker.internal" in text:
             lines = text.split("\n")
             out = []

@@ -26,7 +26,13 @@ class ClusterConnectionViewSet(ModelViewSet):
         """Create cluster; if kubeconfig_content is provided, save to file and set kubeconfig_path."""
         content = (request.data.get("kubeconfig_content") or "").strip()
         use_docker_host = request.data.get("use_docker_host", False) in (True, "true", "1")
-        data = {k: v for k, v in request.data.items() if k not in ("kubeconfig_content", "use_docker_host")}
+        use_kind_network = request.data.get("use_kind_network", False) in (True, "true", "1")
+        kind_cluster_name = (request.data.get("kind_cluster_name") or "").strip() or None
+        data = {
+            k: v
+            for k, v in request.data.items()
+            if k not in ("kubeconfig_content", "use_docker_host", "use_kind_network", "kind_cluster_name")
+        }
         if content and not data.get("kubeconfig_path"):
             data["kubeconfig_path"] = ""  # will set after write
         serializer = self.get_serializer(data=data)
@@ -35,7 +41,13 @@ class ClusterConnectionViewSet(ModelViewSet):
         cluster = serializer.instance
         if content:
             try:
-                path = write_cluster_kubeconfig(cluster.id, content, use_docker_host=use_docker_host)
+                path = write_cluster_kubeconfig(
+                    cluster.id,
+                    content,
+                    use_docker_host=use_docker_host and not use_kind_network,
+                    use_kind_network=use_kind_network,
+                    kind_cluster_name=kind_cluster_name,
+                )
                 cluster.kubeconfig_path = str(path)
                 cluster.save(update_fields=["kubeconfig_path"])
             except Exception as e:
