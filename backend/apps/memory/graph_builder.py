@@ -233,6 +233,57 @@ class KubeGraphBuilder:
             for r in rows
         ]
 
+    def find_top_blast_radius_pods(
+        self,
+        namespace: str,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        """
+        Return pods ordered by blast radius size (how many other pods had incidents
+        within ±5 min of this pod's incidents). Use for cluster-wide "which services
+        cause the most blast radius" queries. Pass namespace='all' to include all namespaces.
+        """
+        with self._driver.session() as session:
+            if (namespace or "").strip().lower() == "all":
+                result = session.run(
+                    """
+                    MATCH (p:Pod)<-[:AFFECTED]-(i1:Incident)
+                    MATCH (i2:Incident)-[:AFFECTED]->(p2:Pod)
+                    WHERE abs(duration.between(i1.timestamp, i2.timestamp).seconds) < 300
+                      AND (p2.name <> p.name OR p2.namespace <> p.namespace)
+                    WITH p, count(DISTINCT p2) AS blast_size
+                    RETURN p.name AS pod_name, p.namespace AS namespace, blast_size
+                    ORDER BY blast_size DESC
+                    LIMIT $limit
+                    """,
+                    limit=limit,
+                )
+            else:
+                ns = namespace or "default"
+                result = session.run(
+                    """
+                    MATCH (p:Pod {namespace: $namespace})<-[:AFFECTED]-(i1:Incident)
+                    MATCH (i2:Incident)-[:AFFECTED]->(p2:Pod)
+                    WHERE abs(duration.between(i1.timestamp, i2.timestamp).seconds) < 300
+                      AND (p2.name <> p.name OR p2.namespace <> p.namespace)
+                    WITH p, count(DISTINCT p2) AS blast_size
+                    RETURN p.name AS pod_name, p.namespace AS namespace, blast_size
+                    ORDER BY blast_size DESC
+                    LIMIT $limit
+                    """,
+                    namespace=ns,
+                    limit=limit,
+                )
+            rows = list(result)
+        return [
+            {
+                "pod_name": r["pod_name"],
+                "namespace": r["namespace"],
+                "blast_size": r["blast_size"],
+            }
+            for r in rows
+        ]
+
     def get_graph_data_for_namespace(self, namespace: str) -> dict[str, Any]:
         """
         Return {nodes: [...], links: [...]} for React Force Graph.

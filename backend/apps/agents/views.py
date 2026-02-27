@@ -139,19 +139,12 @@ def generate_runbook(request, incident_id: int) -> Response:
         )
 
 
-@api_view(["GET"])
-def risk_check(request) -> Response:
+def compute_risk_check(service_name: str, namespace: str) -> dict:
     """
-    GET /api/agents/risk-check/?service=<name>&namespace=<name>
-    Returns risk_level, risk_score, open_incidents, blast_radius_unstable, deploy_crash_history, recommendation.
+    Pre-deploy risk assessment. Returns risk_level, risk_score, open_incidents,
+    blast_radius_unstable, deploy_crash_history, recommendation.
+    Used by both the risk_check API view and the chat/MCP risk_check tool.
     """
-    service_name = (request.query_params.get("service") or "").strip()
-    namespace = (request.query_params.get("namespace") or "").strip()
-    if not service_name or not namespace:
-        return Response(
-            {"error": "Query params 'service' and 'namespace' are required."},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
     from apps.incidents.models import Incident
     from apps.memory.graph_builder import KubeGraphBuilder
 
@@ -186,11 +179,28 @@ def risk_check(request) -> Response:
         else "Safe to deploy"
     )
 
-    return Response({
+    blast_unstable = [{"pod": b.get("affected_pod"), "namespace": b.get("namespace"), **b} for b in blast if (b.get("co_occurrence") or 0) > 2]
+    return {
         "risk_level": risk_level,
         "risk_score": risk_score,
         "open_incidents": len(open_incidents),
-        "blast_radius_unstable": [b for b in blast if (b.get("co_occurrence") or 0) > 2],
+        "blast_radius_unstable": blast_unstable,
         "deploy_crash_history": deploy_history,
         "recommendation": recommendation,
-    })
+    }
+
+
+@api_view(["GET"])
+def risk_check(request) -> Response:
+    """
+    GET /api/agents/risk-check/?service=<name>&namespace=<name>
+    Returns risk_level, risk_score, open_incidents, blast_radius_unstable, deploy_crash_history, recommendation.
+    """
+    service_name = (request.query_params.get("service") or "").strip()
+    namespace = (request.query_params.get("namespace") or "").strip()
+    if not service_name or not namespace:
+        return Response(
+            {"error": "Query params 'service' and 'namespace' are required."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    return Response(compute_risk_check(service_name, namespace))

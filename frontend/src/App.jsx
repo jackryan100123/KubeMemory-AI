@@ -40,6 +40,7 @@ function AppContent() {
         <Route path="patterns" element={<Patterns />} />
         <Route path="risk-check" element={<RiskCheck />} />
         <Route path="chat" element={<Chat />} />
+        <Route path="chat/:sessionId" element={<Chat />} />
         <Route path="connect" element={<ClusterConnect />} />
         <Route path="status" element={<StatusPage />} />
         <Route path="settings" element={<SettingsPage />} />

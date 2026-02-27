@@ -14,7 +14,7 @@ const navItems = [
   { to: '/graph', label: 'Graph Explorer', icon: '🕸️' },
   { to: '/patterns', label: 'Patterns', icon: '📊' },
   { to: '/risk-check', label: 'Risk Check', icon: '⚠️' },
-  { to: '/chat', label: 'Cluster Assistant', icon: '💬' },
+  { to: '/chat', label: 'Chat Assistant', icon: '💬' },
 ]
 
 const systemItems = [
