@@ -85,6 +85,16 @@ class IncidentViewSet(viewsets.ModelViewSet):
         status_param = self.request.query_params.get("status")
         if status_param:
             qs = qs.filter(status=status_param)
+        cluster_id = self.request.query_params.get("cluster_id")
+        if cluster_id:
+            try:
+                cid = int(cluster_id)
+                qs = qs.filter(cluster_id=cid)
+            except (TypeError, ValueError):
+                pass
+        environment = self.request.query_params.get("environment")
+        if environment:
+            qs = qs.filter(cluster__environment=environment)
         occurred_after = self.request.query_params.get("occurred_after")
         if occurred_after:
             from django.utils.dateparse import parse_datetime

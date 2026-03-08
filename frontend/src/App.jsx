@@ -9,24 +9,8 @@ import Patterns from './pages/Patterns'
 import ClusterConnect from './pages/ClusterConnect'
 import RiskCheck from './pages/RiskCheck'
 import Chat from './pages/Chat'
-
-function StatusPage() {
-  return (
-    <div className="p-6">
-      <h1 className="font-mono text-xl text-white">Status</h1>
-      <p className="text-muted text-sm mt-2">Pipeline and cluster status (placeholder).</p>
-    </div>
-  )
-}
-
-function SettingsPage() {
-  return (
-    <div className="p-6">
-      <h1 className="font-mono text-xl text-white">Settings</h1>
-      <p className="text-muted text-sm mt-2">Settings (placeholder).</p>
-    </div>
-  )
-}
+import Status from './pages/Status'
+import Settings from './pages/Settings'
 
 function AppContent() {
   useWebSocket()
@@ -42,8 +26,8 @@ function AppContent() {
         <Route path="chat" element={<Chat />} />
         <Route path="chat/:sessionId" element={<Chat />} />
         <Route path="connect" element={<ClusterConnect />} />
-        <Route path="status" element={<StatusPage />} />
-        <Route path="settings" element={<SettingsPage />} />
+        <Route path="status" element={<Status />} />
+        <Route path="settings" element={<Settings />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

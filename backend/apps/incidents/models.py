@@ -1,6 +1,8 @@
 """Incident, Fix, and ClusterPattern models for KubeMemory."""
 from django.db import models
 
+from apps.clusters.models import ClusterConnection
+
 
 class Incident(models.Model):
     """Represents a single Kubernetes cluster incident."""
@@ -25,6 +27,13 @@ class Incident(models.Model):
         PENDING = "Pending", "Pending"
         UNKNOWN = "Unknown", "Unknown"
 
+    cluster = models.ForeignKey(
+        ClusterConnection,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="incidents",
+    )
     pod_name = models.CharField(max_length=255, db_index=True)
     namespace = models.CharField(max_length=255, db_index=True)
     node_name = models.CharField(max_length=255, blank=True)

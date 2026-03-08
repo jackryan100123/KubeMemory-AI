@@ -2,11 +2,17 @@
 Manages the in-process watcher subprocess (run_watcher).
 Used when the user starts watching from the UI so no manual docker/terminal is needed.
 NEVER logs or stores kubeconfig content — only file paths.
+
+Watcher state is persisted to a PID file so that status and stop work correctly when
+the API is served by multiple workers (e.g. gunicorn); the worker that started the
+watcher holds the process handle, but any worker can report status or stop via the file.
 """
+import json
 import logging
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -15,20 +21,74 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Single watcher process; guarded by _lock
-_watcher_process: subprocess.Popen | None = None
-_watcher_cluster_id: int | None = None
+# Multiple watcher processes keyed by cluster_id; guarded by _lock so that
+# concurrent API workers don't race to start/stop the same watcher.
+_watcher_processes: dict[int, subprocess.Popen] = {}
 _lock = threading.Lock()
 
 # Paths (container defaults). Use a writable path for active config so we don't write to
 # a read-only mount (e.g. docker-compose mounts ./kubeconfig at /app/.kube/config:ro).
 KUBECONFIGS_DIR = Path(os.environ.get("KUBEMEMORY_KUBECONFIGS_DIR", "/app/kubeconfigs"))
 ACTIVE_KUBECONFIG_PATH = Path(os.environ.get("KUBEMEMORY_ACTIVE_KUBECONFIG") or str(KUBECONFIGS_DIR / "active.config"))
+# Legacy single-watcher PID path (used when cluster_id is unknown/None).
+WATCHER_PID_FILE = KUBECONFIGS_DIR / "watcher.pid"
 
 
 def _ensure_kubeconfigs_dir() -> None:
     """Ensure KUBECONFIGS_DIR exists (for per-cluster stored configs)."""
     KUBECONFIGS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _pid_file_for(cluster_id: int | None) -> Path:
+    """Return PID file path for a given cluster_id (or legacy global file if None)."""
+    if cluster_id is None:
+        return WATCHER_PID_FILE
+    return KUBECONFIGS_DIR / f"watcher_{cluster_id}.pid"
+
+
+def _is_process_alive(pid: int) -> bool:
+    """Return True if a process with the given PID exists and is running."""
+    try:
+        os.kill(pid, 0)
+        return True
+    except (ProcessLookupError, PermissionError):
+        return False
+
+
+def _read_watcher_pid_file(cluster_id: int | None = None) -> dict[str, Any] | None:
+    """Read watcher PID file; return {pid, cluster_id} or None if missing/invalid."""
+    try:
+        path = _pid_file_for(cluster_id)
+        if not path.exists():
+            return None
+        data = json.loads(path.read_text(encoding="utf-8"))
+        pid = data.get("pid")
+        cluster_id = data.get("cluster_id")
+        if pid is None or not isinstance(pid, int):
+            return None
+        return {"pid": pid, "cluster_id": cluster_id}
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def _write_watcher_pid_file(pid: int, cluster_id: int | None) -> None:
+    """Write watcher PID and cluster_id to file so any worker can report status."""
+    _ensure_kubeconfigs_dir()
+    path = _pid_file_for(cluster_id)
+    path.write_text(
+        json.dumps({"pid": pid, "cluster_id": cluster_id}, indent=0),
+        encoding="utf-8",
+    )
+
+
+def _remove_watcher_pid_file(cluster_id: int | None) -> None:
+    """Remove PID file (e.g. after watcher stopped)."""
+    try:
+        path = _pid_file_for(cluster_id)
+        if path.exists():
+            path.unlink()
+    except OSError:
+        pass
 
 
 def get_cluster_kubeconfig_path(cluster_id: int) -> Path:
@@ -141,31 +201,44 @@ def start_watcher(cluster_id: int, namespaces: list[str]) -> dict[str, Any]:
     """
     Activate this cluster's kubeconfig and start the watcher subprocess (or restart with new config).
     namespaces: list of namespace names to watch.
+    Writes PID to a per-cluster file so watcher_status/stop work from any API worker.
     Returns {started: bool, error?: str}.
     """
-    global _watcher_process, _watcher_cluster_id
     with _lock:
-        if _watcher_process is not None and _watcher_process.poll() is None:
-            _watcher_process.terminate()
-            _watcher_process.wait(timeout=10)
-            _watcher_process = None
-            _watcher_cluster_id = None
+        # Stop any existing watcher for this cluster (in this worker or another).
+        existing = _watcher_processes.get(cluster_id)
+        if existing is not None and existing.poll() is None:
+            existing.terminate()
+            existing.wait(timeout=10)
+            _watcher_processes.pop(cluster_id, None)
+            _remove_watcher_pid_file(cluster_id)
+        else:
+            # Watcher may have been started by another API worker; stop via PID file.
+            pid_data = _read_watcher_pid_file(cluster_id)
+            if pid_data and _is_process_alive(pid_data["pid"]):
+                try:
+                    os.kill(pid_data["pid"], signal.SIGTERM)
+                except (ProcessLookupError, PermissionError):
+                    pass
+                _remove_watcher_pid_file(cluster_id)
         if not activate_cluster_config(cluster_id, namespaces):
             return {"started": False, "error": "Cluster kubeconfig file not found. Use paste kubeconfig or provide path."}
         env = os.environ.copy()
         env["K8S_KUBECONFIG_PATH"] = str(ACTIVE_KUBECONFIG_PATH)
         env["K8S_NAMESPACES"] = ",".join(namespaces) if namespaces else "default"
+        env["K8S_CLUSTER_ID"] = str(cluster_id)
         try:
             # Use writable dir that contains manage.py (e.g. /app in Docker, or backend/ locally)
             cwd = Path("/app") if Path("/app/manage.py").exists() else Path(os.getcwd())
-            _watcher_process = subprocess.Popen(
+            proc = subprocess.Popen(
                 [sys.executable, "manage.py", "run_watcher"],
                 cwd=str(cwd),
                 env=env,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
             )
-            _watcher_cluster_id = cluster_id
+            _watcher_processes[cluster_id] = proc
+            _write_watcher_pid_file(proc.pid, cluster_id)
             logger.info("Started watcher for cluster %s, namespaces %s", cluster_id, namespaces)
             return {"started": True}
         except Exception as e:
@@ -173,23 +246,123 @@ def start_watcher(cluster_id: int, namespaces: list[str]) -> dict[str, Any]:
             return {"started": False, "error": str(e)}
 
 
-def stop_watcher() -> dict[str, Any]:
-    """Stop the watcher subprocess if running. Returns {stopped: bool}."""
-    global _watcher_process, _watcher_cluster_id
-    with _lock:
-        if _watcher_process is None:
-            return {"stopped": False}
-        if _watcher_process.poll() is None:
-            _watcher_process.terminate()
-            _watcher_process.wait(timeout=10)
-        _watcher_process = None
-        _watcher_cluster_id = None
-        logger.info("Stopped watcher")
-        return {"stopped": True}
+def _stop_watcher_for_cluster(cluster_id: int) -> bool:
+    """Stop watcher for a specific cluster_id. Returns True if anything was stopped."""
+    stopped = False
+    proc = _watcher_processes.get(cluster_id)
+    if proc is not None and proc.poll() is None:
+        proc.terminate()
+        proc.wait(timeout=10)
+        _watcher_processes.pop(cluster_id, None)
+        _remove_watcher_pid_file(cluster_id)
+        logger.info("Stopped watcher for cluster %s (local process)", cluster_id)
+        stopped = True
+    pid_data = _read_watcher_pid_file(cluster_id)
+    if pid_data and _is_process_alive(pid_data["pid"]):
+        try:
+            os.kill(pid_data["pid"], signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            pass
+        _remove_watcher_pid_file(cluster_id)
+        logger.info("Stopped watcher for cluster %s (via PID file)", cluster_id)
+        stopped = True
+    return stopped
 
 
-def watcher_status() -> dict[str, Any]:
-    """Return {running: bool, cluster_id?: int}."""
+def stop_watcher(cluster_id: int | None = None) -> dict[str, Any]:
+    """
+    Stop watcher subprocess(es).
+
+    If cluster_id is provided, stop only that cluster's watcher.
+    If cluster_id is None, stop all known watchers.
+    Returns {stopped: bool}.
+    """
     with _lock:
-        running = _watcher_process is not None and _watcher_process.poll() is None
-        return {"running": running, "cluster_id": _watcher_cluster_id}
+        if cluster_id is not None:
+            return {"stopped": _stop_watcher_for_cluster(cluster_id)}
+
+        stopped_any = False
+        # Stop all in-memory tracked watchers.
+        for cid in list(_watcher_processes.keys()):
+            if _stop_watcher_for_cluster(cid):
+                stopped_any = True
+
+        # Also stop any watchers that have PID files but are not in memory here.
+        _ensure_kubeconfigs_dir()
+        for path in KUBECONFIGS_DIR.glob("watcher_*.pid"):
+            name = path.name  # watcher_<id>.pid
+            try:
+                cid_str = name.removeprefix("watcher_").removesuffix(".pid")
+                cid = int(cid_str)
+            except ValueError:
+                continue
+            if cid in _watcher_processes:
+                continue
+            if _stop_watcher_for_cluster(cid):
+                stopped_any = True
+
+        # Legacy global watcher PID file (no cluster_id).
+        legacy = _read_watcher_pid_file(None)
+        if legacy and _is_process_alive(legacy["pid"]):
+            try:
+                os.kill(legacy["pid"], signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                pass
+            _remove_watcher_pid_file(None)
+            logger.info("Stopped legacy watcher (no cluster_id)")
+            stopped_any = True
+
+        return {"stopped": stopped_any}
+
+
+def watcher_status(cluster_id: int | None = None) -> dict[str, Any]:
+    """
+    Return watcher status.
+
+    If cluster_id is provided, returns {running: bool, cluster_id: int | None} for that cluster.
+    If cluster_id is None, returns a summary:
+      {running: bool, cluster_id: int | None, cluster_ids: list[int]}
+    where cluster_id (singular) is the first active cluster (for backward-compatible UI).
+    """
+    with _lock:
+        if cluster_id is not None:
+            # Check in-memory process first.
+            proc = _watcher_processes.get(cluster_id)
+            if proc is not None and proc.poll() is None:
+                return {"running": True, "cluster_id": cluster_id}
+            # Fallback to PID file.
+            pid_data = _read_watcher_pid_file(cluster_id)
+            if pid_data and _is_process_alive(pid_data["pid"]):
+                return {"running": True, "cluster_id": pid_data.get("cluster_id")}
+            if pid_data:
+                _remove_watcher_pid_file(cluster_id)
+            return {"running": False, "cluster_id": cluster_id}
+
+        # Global summary across all clusters.
+        active_cluster_ids: list[int] = []
+
+        # Check local processes.
+        for cid, proc in _watcher_processes.items():
+            if proc.poll() is None and cid not in active_cluster_ids:
+                active_cluster_ids.append(cid)
+
+        # Check PID files for any additional clusters.
+        _ensure_kubeconfigs_dir()
+        for path in KUBECONFIGS_DIR.glob("watcher_*.pid"):
+            name = path.name
+            try:
+                cid_str = name.removeprefix("watcher_").removesuffix(".pid")
+                cid = int(cid_str)
+            except ValueError:
+                continue
+            if cid in active_cluster_ids:
+                continue
+            pid_data = _read_watcher_pid_file(cid)
+            if pid_data and _is_process_alive(pid_data["pid"]):
+                active_cluster_ids.append(cid)
+            elif pid_data:
+                _remove_watcher_pid_file(cid)
+
+        running = bool(active_cluster_ids)
+        first_cluster = active_cluster_ids[0] if active_cluster_ids else None
+        return {"running": running, "cluster_id": first_cluster, "cluster_ids": active_cluster_ids}

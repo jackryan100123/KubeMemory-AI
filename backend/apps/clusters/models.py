@@ -16,9 +16,18 @@ class ClusterConnection(models.Model):
         FAILED = "failed", "Failed"
         WATCHING = "watching", "Watching Events"
 
+    class Environment(models.TextChoices):
+        DEV = "dev", "Development"
+        STAGING = "staging", "Staging"
+        PROD = "prod", "Production"
+        OTHER = "other", "Other"
+
     name = models.CharField(max_length=255)
     connection_method = models.CharField(
         max_length=20, choices=ConnectionMethod.choices
+    )
+    environment = models.CharField(
+        max_length=20, choices=Environment.choices, default=Environment.DEV
     )
     kubeconfig_path = models.CharField(max_length=512, blank=True)
     context_name = models.CharField(max_length=255, blank=True)

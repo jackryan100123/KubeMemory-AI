@@ -19,6 +19,11 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 from kubernetes.client.rest import ApiException
 from kubernetes.watch import Watch
 
+from apps.clusters.watcher_manager import (
+    _ensure_kubeconfigs_dir,
+    _remove_watcher_pid_file,
+    _write_watcher_pid_file,
+)
 from apps.incidents.tasks import ingest_incident_task
 
 logger = logging.getLogger(__name__)
@@ -82,6 +87,30 @@ def _read_pod_logs(v1: client.CoreV1Api, namespace: str, pod_name: str, tail_lin
         return ""
 
 
+def _extract_service_name(pod: client.V1Pod) -> str:
+    """Best-effort extraction of a logical service name from pod metadata."""
+    meta = getattr(pod, "metadata", None)
+    if not meta:
+        return ""
+    labels = getattr(meta, "labels", None) or {}
+    # Common label conventions
+    for key in ("app.kubernetes.io/name", "app", "k8s-app"):
+        val = labels.get(key)
+        if val:
+            return str(val)
+    # Owner references (e.g. Deployment/StatefulSet)
+    owners = getattr(meta, "owner_references", None) or []
+    for owner in owners:
+        name = getattr(owner, "name", "") or ""
+        if name:
+            return name
+    # Fallback: base of pod name prefix (before first '-')
+    name = getattr(meta, "name", "") or ""
+    if name and "-" in name:
+        return name.split("-", 1)[0]
+    return name
+
+
 def _build_incident_data(
     v1: client.CoreV1Api,
     namespace: str,
@@ -90,23 +119,28 @@ def _build_incident_data(
     message: str,
     event_time: Any,
     node_name: str = "",
+    service_name: str = "",
+    cluster_id: int | None = None,
 ) -> dict[str, Any]:
     """Build incident payload for ingest_incident_task."""
     incident_type = REASON_TO_TYPE.get(reason, "Unknown")
     severity = REASON_TO_SEVERITY.get(reason, "medium")
     raw_logs = _read_pod_logs(v1, namespace, pod_name)
     occurred_at = event_time.isoformat() if hasattr(event_time, "isoformat") else str(event_time)
-    return {
+    data: dict[str, Any] = {
         "pod_name": pod_name,
         "namespace": namespace,
         "node_name": node_name or "",
-        "service_name": "",
+        "service_name": service_name or "",
         "incident_type": incident_type,
         "severity": severity,
         "description": message or f"{reason}",
         "raw_logs": raw_logs,
         "occurred_at": occurred_at,
     }
+    if cluster_id is not None:
+        data["cluster_id"] = cluster_id
+    return data
 
 
 class Command(BaseCommand):
@@ -117,6 +151,7 @@ class Command(BaseCommand):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._shutdown = False
+        self._cluster_id: int | None = None
 
     def handle(self, *args: Any, **options: Any) -> None:
         signal.signal(signal.SIGTERM, self._signal_handler)
@@ -128,6 +163,13 @@ class Command(BaseCommand):
         watch_timeout = _get_watch_timeout()
         backoff = 1
         max_backoff = 60
+
+        # Register this process in PID file so status/stop work from any worker
+        _ensure_kubeconfigs_dir()
+        cluster_id_raw = os.environ.get("K8S_CLUSTER_ID", "").strip()
+        cluster_id = int(cluster_id_raw) if cluster_id_raw else None
+        self._cluster_id = cluster_id
+        _write_watcher_pid_file(os.getpid(), cluster_id)
 
         while not self._shutdown:
             for namespace in namespaces:
@@ -145,6 +187,7 @@ class Command(BaseCommand):
 
     def _signal_handler(self, signum: int, frame: Any) -> None:
         self._shutdown = True
+        _remove_watcher_pid_file(self._cluster_id)
         logger.info("Received signal %s, shutting down watcher", signum)
 
     def _watch_namespace(
@@ -177,9 +220,11 @@ class Command(BaseCommand):
             if not pod_name:
                 continue
             node_name = ""
+            service_name = ""
             try:
                 pod = v1.read_namespaced_pod(name=pod_name, namespace=namespace)
                 node_name = getattr(pod.spec, "node_name", None) or ""
+                service_name = _extract_service_name(pod)
             except Exception:
                 pass
             event_time = getattr(obj, "last_timestamp", None) or getattr(obj, "event_time", None)
@@ -195,6 +240,8 @@ class Command(BaseCommand):
                 message=message,
                 event_time=event_time,
                 node_name=node_name,
+                service_name=service_name,
+                cluster_id=self._cluster_id,
             )
             ingest_incident_task.delay(incident_data)
             logger.info(

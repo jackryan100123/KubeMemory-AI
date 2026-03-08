@@ -35,10 +35,19 @@ class FixSerializer(serializers.ModelSerializer):
 class IncidentListSerializer(serializers.ModelSerializer):
     """List serializer for Incident; no nested fixes."""
 
+    cluster_id = serializers.IntegerField(source="cluster.id", read_only=True)
+    cluster_name = serializers.CharField(source="cluster.name", read_only=True)
+    cluster_environment = serializers.CharField(
+        source="cluster.environment", read_only=True
+    )
+
     class Meta:
         model = Incident
         fields = [
             "id",
+            "cluster_id",
+            "cluster_name",
+            "cluster_environment",
             "pod_name",
             "namespace",
             "node_name",
@@ -58,11 +67,19 @@ class IncidentDetailSerializer(serializers.ModelSerializer):
     """Detail serializer for Incident with nested fixes."""
 
     fixes = FixSerializer(many=True, read_only=True)
+    cluster_id = serializers.IntegerField(source="cluster.id", read_only=True)
+    cluster_name = serializers.CharField(source="cluster.name", read_only=True)
+    cluster_environment = serializers.CharField(
+        source="cluster.environment", read_only=True
+    )
 
     class Meta:
         model = Incident
         fields = [
             "id",
+            "cluster_id",
+            "cluster_name",
+            "cluster_environment",
             "pod_name",
             "namespace",
             "node_name",

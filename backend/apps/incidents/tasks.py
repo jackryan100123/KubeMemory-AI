@@ -1,5 +1,6 @@
 """Celery tasks for incident ingestion and corrective RAG."""
 import logging
+from datetime import timedelta
 from typing import Any
 
 from asgiref.sync import async_to_sync
@@ -7,6 +8,7 @@ from celery import shared_task
 from channels.layers import get_channel_layer
 from django.utils import timezone
 
+from apps.clusters.models import ClusterConnection
 from .models import Incident
 from .serializers import IncidentListSerializer
 
@@ -57,6 +59,14 @@ def ingest_incident_task(self, incident_data: dict) -> dict[str, Any]:
         if severity not in dict(Incident.Severity.choices):
             severity = Incident.Severity.MEDIUM
 
+        cluster_obj: ClusterConnection | None = None
+        cluster_id_val = incident_data.get("cluster_id")
+        if cluster_id_val is not None:
+            try:
+                cluster_obj = ClusterConnection.objects.filter(id=int(cluster_id_val)).first()
+            except (TypeError, ValueError):
+                cluster_obj = None
+
         defaults = {
             "node_name": incident_data.get("node_name", ""),
             "service_name": incident_data.get("service_name", ""),
@@ -67,16 +77,32 @@ def ingest_incident_task(self, incident_data: dict) -> dict[str, Any]:
             "estimated_waste_usd": estimate_waste_usd(incident_data),
         }
 
-        incident, created = Incident.objects.get_or_create(
-            pod_name=incident_data.get("pod_name", ""),
-            namespace=incident_data.get("namespace", ""),
-            occurred_at=occurred_at,
-            incident_type=incident_type,
-            defaults=defaults,
-        )
+        pod_name = incident_data.get("pod_name", "") or ""
+        namespace = incident_data.get("namespace", "") or ""
 
-        if not created:
-            return {"status": "duplicate", "incident_id": incident.id}
+        # Basic deduplication window: if a matching incident already exists for this
+        # pod/namespace/type/cluster in the last 5 minutes, treat as duplicate.
+        window_start = occurred_at - timedelta(minutes=5)
+        existing_qs = Incident.objects.filter(
+            pod_name=pod_name,
+            namespace=namespace,
+            incident_type=incident_type,
+            occurred_at__gte=window_start,
+        )
+        if cluster_obj is not None:
+            existing_qs = existing_qs.filter(cluster=cluster_obj)
+        existing = existing_qs.order_by("-occurred_at").first()
+        if existing:
+            return {"status": "duplicate", "incident_id": existing.id}
+
+        incident = Incident.objects.create(
+            cluster=cluster_obj,
+            pod_name=pod_name,
+            namespace=namespace,
+            incident_type=incident_type,
+            occurred_at=occurred_at,
+            **defaults,
+        )
 
         # Step 2: Embed in ChromaDB
         vector_store = IncidentVectorStore()
