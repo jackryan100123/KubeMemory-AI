@@ -5,6 +5,7 @@ from .models import ClusterConnection
 
 
 VALID_CONNECTION_METHODS = {c.value for c in ClusterConnection.ConnectionMethod}
+VALID_ENVIRONMENTS = {e.value for e in ClusterConnection.Environment}
 
 
 class ClusterConnectionSerializer(serializers.ModelSerializer):
@@ -15,6 +16,7 @@ class ClusterConnectionSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "name",
+            "environment",
             "connection_method",
             "kubeconfig_path",
             "context_name",
@@ -38,6 +40,7 @@ class ClusterConnectionSerializer(serializers.ModelSerializer):
             "kubeconfig_path": {"allow_blank": True, "required": False, "default": ""},
             "context_name": {"allow_blank": True, "required": False, "default": ""},
             "namespaces": {"required": False, "default": list},
+            "environment": {"required": False, "default": ClusterConnection.Environment.DEV},
         }
 
     def validate_name(self, value: str) -> str:
@@ -49,6 +52,15 @@ class ClusterConnectionSerializer(serializers.ModelSerializer):
         if not value or value not in VALID_CONNECTION_METHODS:
             raise serializers.ValidationError(
                 f"connection_method must be one of: {', '.join(sorted(VALID_CONNECTION_METHODS))}."
+            )
+        return value.strip()
+
+    def validate_environment(self, value: str) -> str:
+        if value is None or value == "":
+            return ClusterConnection.Environment.DEV
+        if not isinstance(value, str) or value not in VALID_ENVIRONMENTS:
+            raise serializers.ValidationError(
+                f"environment must be one of: {', '.join(sorted(VALID_ENVIRONMENTS))}."
             )
         return value.strip()
 
