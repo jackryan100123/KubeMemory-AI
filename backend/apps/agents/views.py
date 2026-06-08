@@ -59,15 +59,23 @@ def get_analysis(request, incident_id: int) -> Response:
             {"error": "Incident not found."},
             status=status.HTTP_404_NOT_FOUND,
         )
-    if not (incident.ai_analysis or incident.ai_analysis.strip()):
+    if not (incident.ai_analysis or incident.ai_analysis.strip()) and not incident.analysis_result:
         return Response({"status": "pending"})
+    result = incident.analysis_result or {}
     return Response({
         "status": "ok",
         "recommendation": incident.ai_analysis,
-        "root_cause": getattr(incident, "ai_root_cause", "") or "",
-        "confidence": getattr(incident, "ai_confidence", None) or 0.0,
-        "sources": getattr(incident, "ai_sources", None) or [],
-        "prevention_advice": getattr(incident, "ai_prevention_advice", "") or "",
+        "analysis_result": result,
+        "confidence_score": result.get("confidence_score", 0.0),
+        "severity": result.get("severity"),
+        "root_cause_hypothesis": result.get("root_cause_hypothesis", ""),
+        "affected_services": result.get("affected_services", []),
+        "recommended_actions": result.get("recommended_actions", []),
+        "runbook_steps": result.get("runbook_steps", []),
+        "root_cause": result.get("root_cause_hypothesis", ""),
+        "confidence": result.get("confidence_score", 0.0),
+        "sources": [],
+        "prevention_advice": "\n".join(result.get("runbook_steps", []) or []),
     })
 
 
@@ -79,7 +87,11 @@ def pipeline_status(request) -> Response:
     """
     import os
 
-    model = os.environ.get("OLLAMA_CHAT_MODEL") or "mistral:7b"
+    from apps.agents.ollama_health import get_ollama_ready_from_redis, verify_ollama_models
+
+    model = os.environ.get("OLLAMA_REASONING_MODEL") or os.environ.get(
+        "OLLAMA_CHAT_MODEL", "mistral:7b"
+    )
     ollama_url = os.environ.get("OLLAMA_BASE_URL") or "http://localhost:11434"
     chroma_count: int | None = None
     ollama_ok = False
@@ -104,10 +116,15 @@ def pipeline_status(request) -> Response:
     except Exception:
         pass
 
+    ollama_ready = get_ollama_ready_from_redis()
+    if ollama_ready is None:
+        ollama_ready = verify_ollama_models()
+
     return Response({
         "model": model,
         "ollama_base_url": ollama_url,
         "ollama_ok": ollama_ok,
+        "ollama_ready": ollama_ready,
         "chroma_doc_count": chroma_count,
     })
 

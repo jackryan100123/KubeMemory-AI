@@ -12,11 +12,17 @@ services:
       DJANGO_SETTINGS_MODULE: config.settings.prod
     ports: []
 
-  celery-worker:
+  celery-worker-ingest:
     build:
       context: ./backend
       target: runtime
-    command: celery -A config worker --loglevel=warning --concurrency=4
+    command: celery -A config worker --loglevel=warning -Q ingest --concurrency=4
+
+  celery-worker-llm:
+    build:
+      context: ./backend
+      target: runtime
+    command: celery -A config worker --loglevel=warning -Q llm --concurrency=1
 
   celery-beat:
     build:

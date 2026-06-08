@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Flake8 backend
+        run: |
+          pip install flake8==7.1.1
+          flake8 backend/apps backend/config --max-line-length=100 --exclude=migrations
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install frontend deps
+        working-directory: frontend
+        run: npm ci
+      - name: ESLint frontend (if config exists)
+        working-directory: frontend
+        run: |
+          if [ -f eslint.config.js ] || [ -f .eslintrc.cjs ]; then
+            npx eslint src/
+          else
+            echo "No ESLint config; skipping"
+          fi
+
+  django-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          pip install -r backend/requirements/base.txt -r backend/requirements/dev.txt
+      - name: Django check --deploy
+        env:
+          DJANGO_SETTINGS_MODULE: config.settings.dev
+          DJANGO_SECRET_KEY: ci-test-secret-key-not-for-production
+          TEST_ENV: "true"
+          FERNET_KEY: ci-fernet-key-placeholder-must-be-32-bytes-long!!
+          POSTGRES_HOST: localhost
+        working-directory: backend
+        run: python manage.py check --deploy
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build images
+        run: docker compose build
+
+  smoke-test:
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start stack
+        run: |
+          cp .env.example .env
+          echo "FERNET_KEY=$(python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')" >> .env
+          docker compose up -d
+          sleep 30
+      - name: Smoke curl
+        run: |
+          curl -sf http://localhost:8000/api/health/
+      - name: Tear down
+        if: always()
+        run: docker compose down -v

@@ -33,6 +33,7 @@ class AgentState(TypedDict):
     confidence: float
     sources: List[str]
     prevention_advice: str
+    analysis_result: NotRequired[dict]
 
     # PIPELINE META
     errors: List[str]

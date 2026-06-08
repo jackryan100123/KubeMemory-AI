@@ -79,7 +79,7 @@ class IncidentViewSet(viewsets.ModelViewSet):
         return context
 
     def get_queryset(self):
-        qs = Incident.objects.all().order_by("-occurred_at")
+        qs = Incident.objects.all().order_by("-last_seen_at", "-occurred_at")
         if self.action != "list":
             return qs
         status_param = self.request.query_params.get("status")

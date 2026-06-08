@@ -7,6 +7,7 @@ Phase 2 → ChromaDB + Neo4j Memory (Week 3-4)
 Phase 3 → LangGraph Agents (Week 5-6)
 Phase 4 → React Dashboard (Week 7-8)
 Phase 5 → MCP Server + Hardening (Week 9-10)
+Phase 6 → Chat Assistant + Multi-cluster Connect + JWT/RBAC/Monitoring
 
 ## KEY RULE — NEVER DO THESE
 ✗ Hardcode any password/token/key in any file
@@ -88,6 +89,10 @@ GET    /api/memory/patterns/              → deploy-crash correlations
 POST   /api/agents/analyze/{id}/          → trigger re-analysis
 GET    /api/agents/analysis/{id}/         → get stored analysis
 GET    /api/agents/status/                → pipeline health check
+GET    /api/status/                       → aggregated system status (heartbeat, ollama, task logs)
+GET    /api/monitoring/task-logs/         → last 50 failed Celery tasks
+POST   /api/token/                        → JWT obtain pair
+GET    /api/notifications/configs/        → notification sinks CRUD
 
 # WebSocket
 ws://localhost:8000/ws/incidents/         → real-time incident stream

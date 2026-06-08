@@ -1,30 +1,28 @@
 import { useEffect, useRef, useCallback } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
+import { buildWebSocketUrl } from '../api/wsUrl'
 import useIncidentStore from '../store/incidentStore'
 import toast from 'react-hot-toast'
+
+const MAX_RECONNECT_MS = 30000
 
 export function useWebSocket() {
   const ws = useRef(null)
   const reconnectTimeout = useRef(null)
+  const reconnectDelay = useRef(3000)
   const queryClient = useQueryClient()
   const { addLiveIncident, setWsConnected } = useIncidentStore()
 
   const connect = useCallback(() => {
-    // When built in Docker, use same origin so nginx can proxy /ws to backend.
-    // In Vite dev, same-origin is 5173; use explicit backend (8000) if set or in dev so WS connects directly.
-    // Strip trailing /ws so we never get .../ws/ws/incidents/
-    const raw =
-      import.meta.env.VITE_WS_URL ||
-      (import.meta.env.DEV ? 'ws://localhost:8000' : null) ||
-      (typeof window !== 'undefined'
-        ? `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`
-        : 'ws://localhost:8000')
-    const base = typeof raw === 'string' ? raw.replace(/\/ws\/?$/, '') : raw
-    const path = 'ws/incidents/'
-    const url = base ? `${base}${base.endsWith('/') ? '' : '/'}${path}` : `/${path}`
+    if (ws.current?.readyState === WebSocket.OPEN || ws.current?.readyState === WebSocket.CONNECTING) {
+      return
+    }
+
+    const url = buildWebSocketUrl('incidents')
     ws.current = new WebSocket(url)
 
     ws.current.onopen = () => {
+      reconnectDelay.current = 3000
       setWsConnected(true)
       console.log('[WS] Connected to KubeMemory')
     }
@@ -46,12 +44,12 @@ export function useWebSocket() {
 
     ws.current.onclose = () => {
       setWsConnected(false)
-      // Auto-reconnect after 3 seconds
-      reconnectTimeout.current = setTimeout(connect, 3000)
+      const delay = reconnectDelay.current
+      reconnectDelay.current = Math.min(delay * 2, MAX_RECONNECT_MS)
+      reconnectTimeout.current = setTimeout(connect, delay)
     }
 
-    ws.current.onerror = (err) => {
-      console.error('[WS] Error:', err)
+    ws.current.onerror = () => {
       ws.current?.close()
     }
   }, [addLiveIncident, setWsConnected, queryClient])
@@ -61,6 +59,7 @@ export function useWebSocket() {
     return () => {
       clearTimeout(reconnectTimeout.current)
       ws.current?.close()
+      ws.current = null
     }
   }, [connect])
 }

@@ -1,5 +1,6 @@
 """ClusterConnection model for storing connected K8s cluster metadata."""
 from django.db import models
+from config.encrypted_fields import EncryptedTextField
 
 
 class ClusterConnection(models.Model):
@@ -30,6 +31,10 @@ class ClusterConnection(models.Model):
         max_length=20, choices=Environment.choices, default=Environment.DEV
     )
     kubeconfig_path = models.CharField(max_length=512, blank=True)
+    kubeconfig_content = EncryptedTextField(
+        blank=True,
+        help_text="Pasted kubeconfig YAML, encrypted at rest (never exposed via API).",
+    )
     context_name = models.CharField(max_length=255, blank=True)
     namespaces = models.JSONField(default=list)
     status = models.CharField(

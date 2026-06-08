@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
+import { useWebSocket } from '../../hooks/useWebSocket'
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { fetchClusters, deleteCluster, stopWatcher } from '../../api/clusters'
@@ -11,7 +12,7 @@ import clsx from 'clsx'
 const navItems = [
   { to: '/', label: 'Dashboard', icon: '🏠' },
   { to: '/incidents', label: 'Incidents', icon: '🚨' },
-  { to: '/graph', label: 'Graph Explorer', icon: '🕸️' },
+  { to: '/graph', label: 'Graph Explorer', icon: '🕸️', hideOnMobile: true },
   { to: '/patterns', label: 'Patterns', icon: '📊' },
   { to: '/risk-check', label: 'Risk Check', icon: '⚠️' },
   { to: '/chat', label: 'Chat Assistant', icon: '💬' },
@@ -23,6 +24,7 @@ const systemItems = [
 ]
 
 export default function AppShell() {
+  useWebSocket()
   const queryClient = useQueryClient()
   const clearLive = useIncidentStore((s) => s.clearLive)
   const [disconnectMenu, setDisconnectMenu] = useState(null) // cluster id or null
@@ -85,14 +87,15 @@ export default function AppShell() {
             <span className="font-mono text-sm font-semibold text-white">⬡ KubeMemory</span>
           </div>
           <nav className="p-2 flex flex-col gap-0.5 mt-2">
-            {navItems.map(({ to, label, icon }) => (
+            {navItems.map(({ to, label, icon, hideOnMobile }) => (
               <NavLink
                 key={to}
                 to={to}
                 end={to === '/'}
                 className={({ isActive }) =>
                   clsx(
-                    'px-3 py-2 rounded text-sm font-mono transition-colors flex items-center gap-2',
+                    'px-3 py-2 rounded text-sm font-mono transition-colors items-center gap-2',
+                    hideOnMobile ? 'hidden sm:flex' : 'flex',
                     isActive
                       ? 'bg-accent/20 text-accent'
                       : 'text-muted hover:text-white hover:bg-surface2'

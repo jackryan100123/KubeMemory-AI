@@ -35,6 +35,11 @@ export default function IncidentCard({ incident, onClick }) {
     >
       <div className="flex items-center gap-2 flex-wrap">
         <SeverityBadge severity={incident.severity} />
+        {(incident.occurrence_count ?? 1) > 1 && (
+          <span className="text-xs font-mono px-2 py-0.5 rounded bg-accent-yellow/20 text-accent-yellow">
+            ×{incident.occurrence_count}
+          </span>
+        )}
         <span className="font-mono text-sm text-white">
           {incident.incident_type} — {incident.pod_name}
         </span>

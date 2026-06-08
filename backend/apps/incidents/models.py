@@ -26,6 +26,7 @@ class Incident(models.Model):
         EVICTED = "Evicted", "Evicted"
         PENDING = "Pending", "Pending"
         UNKNOWN = "Unknown", "Unknown"
+        WATCHER_DOWN = "WatcherDown", "WatcherDown"
 
     cluster = models.ForeignKey(
         ClusterConnection,
@@ -46,6 +47,11 @@ class Incident(models.Model):
     description = models.TextField()
     raw_logs = models.TextField(blank=True)
     ai_analysis = models.TextField(blank=True)
+    analysis_result = models.JSONField(default=dict, blank=True)
+    fingerprint = models.CharField(max_length=64, unique=True, null=True, blank=True, db_index=True)
+    occurrence_count = models.PositiveIntegerField(default=1)
+    last_seen_at = models.DateTimeField(null=True, blank=True)
+    embedding_model_version = models.CharField(max_length=128, blank=True)
     chroma_id = models.CharField(max_length=255, blank=True)
     neo4j_id = models.CharField(max_length=255, blank=True)
     occurred_at = models.DateTimeField(db_index=True)

@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16.4-alpine
     env_file: .env
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
@@ -19,7 +19,7 @@ services:
       - kubememory-net
 
   redis:
-    image: redis:7-alpine
+    image: redis:7.2-alpine
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -52,12 +52,13 @@ services:
         condition: service_healthy
     volumes:
       - chroma_data:/app/chroma_data
+      - backup_data:/backups
       - ./kubeconfig:/app/.kube/config:ro
     ports:
       - "8000:8000"
     command: python -m daphne -b 0.0.0.0 -p 8000 config.asgi:application
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/admin/')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health/')"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -66,12 +67,13 @@ services:
     networks:
       - kubememory-net
 
-  celery-worker:
+  celery-worker-ingest:
     build: ./backend
     env_file: .env
     environment:
       DJANGO_SETTINGS_MODULE: config.settings.dev
       POSTGRES_HOST: postgres
+      REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/1
       CELERY_RESULT_BACKEND: redis://redis:6379/2
       CHANNEL_LAYERS_HOST: redis
@@ -85,7 +87,39 @@ services:
         condition: service_started
     volumes:
       - chroma_data:/app/chroma_data
-    command: python -m celery -A config worker -l info
+      - backup_data:/backups
+    command: python -m celery -A config worker -l info -Q ingest --concurrency=4
+    healthcheck:
+      test: ["CMD", "python", "-m", "celery", "-A", "config", "inspect", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - kubememory-net
+
+  celery-worker-llm:
+    build: ./backend
+    env_file: .env
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.dev
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      OLLAMA_BASE_URL: http://ollama:11434
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+      django-api:
+        condition: service_started
+    volumes:
+      - chroma_data:/app/chroma_data
+    command: python -m celery -A config worker -l info -Q llm --concurrency=1
     healthcheck:
       test: ["CMD", "python", "-m", "celery", "-A", "config", "inspect", "ping"]
       interval: 30s
@@ -118,7 +152,7 @@ services:
       - kubememory-net
 
   neo4j:
-    image: neo4j:5-community
+    image: neo4j:5.20-community
     environment:
       NEO4J_AUTH: ${NEO4J_USER}/${NEO4J_PASSWORD}
     ports:
@@ -137,7 +171,7 @@ services:
       - kubememory-net
 
   ollama:
-    image: ollama/ollama:latest
+    image: ollama/ollama:0.3.12
     ports:
       - "11434:11434"
     volumes:
@@ -147,7 +181,7 @@ services:
       - kubememory-net
 
   ollama-init:
-    image: ollama/ollama:latest
+    image: ollama/ollama:0.3.12
     depends_on:
       ollama:
         condition: service_started
@@ -185,6 +219,7 @@ volumes:
   neo4j_data:
   ollama_data:
   chroma_data:
+  backup_data:
 
 networks:
   kubememory-net:

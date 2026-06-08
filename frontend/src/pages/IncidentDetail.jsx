@@ -174,7 +174,27 @@ export default function IncidentDetail() {
               {incident.pod_name} / {incident.namespace} / {incident.node_name || '—'}
             </p>
             <p className="text-xs text-muted mt-2">
-              Occurred: {incident.occurred_at ? formatDistanceToNow(new Date(incident.occurred_at), { addSuffix: true }) : '—'} | Status:{' '}
+              First seen:{' '}
+              {incident.first_seen_at || incident.occurred_at
+                ? formatDistanceToNow(
+                    new Date(incident.first_seen_at || incident.occurred_at),
+                    { addSuffix: true }
+                  )
+                : '—'}
+              {' · '}
+              Last seen:{' '}
+              {incident.last_seen_at
+                ? formatDistanceToNow(new Date(incident.last_seen_at), { addSuffix: true })
+                : incident.occurred_at
+                  ? formatDistanceToNow(new Date(incident.occurred_at), { addSuffix: true })
+                  : '—'}
+              {(incident.occurrence_count ?? 1) > 1 && (
+                <span className="ml-2 text-accent-yellow font-mono">
+                  ×{incident.occurrence_count} occurrences
+                </span>
+              )}
+              {' · '}
+              Status:{' '}
               <StatusDot status={incident.status} /> {incident.status}
               <span className="ml-2 relative inline-block">
                 <button

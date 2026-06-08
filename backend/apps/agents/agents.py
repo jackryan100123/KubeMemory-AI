@@ -6,7 +6,6 @@ import json
 import logging
 import os
 import re
-import urllib.request
 from typing import Any
 
 from langchain_ollama import ChatOllama
@@ -14,57 +13,11 @@ from langchain_ollama import ChatOllama
 from apps.memory.graph_builder import KubeGraphBuilder
 from apps.memory.vector_store import IncidentVectorStore
 
+from .llm_config import resolve_reasoning_model
+from .schemas import AnalysisResult
 from .state import AgentState
 
 logger = logging.getLogger(__name__)
-
-# Fallback chat models to try if OLLAMA_CHAT_MODEL is not available (small, fast).
-OLLAMA_CHAT_FALLBACKS = ("qwen2.5:0.5b", "phi3:mini", "llama3.2:3b", "llama3.2:1b", "mistral:7b")
-
-
-def _get_available_ollama_models(base_url: str) -> list[str]:
-    """Return list of model names available on the Ollama server."""
-    try:
-        req = urllib.request.Request(
-            f"{base_url.rstrip('/')}/api/tags",
-            headers={"Accept": "application/json"},
-        )
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            data = json.loads(resp.read().decode())
-        return [m.get("name", "") for m in data.get("models", []) if m.get("name")]
-    except Exception as e:
-        logger.warning("Could not list Ollama models at %s: %s", base_url, e)
-        return []
-
-
-def get_working_chat_model(
-    base_url: str | None = None,
-    preferred: str | None = None,
-) -> str | None:
-    """
-    Return a chat model name that exists on the Ollama server.
-    Uses /api/tags: preferred first if available, then fallbacks, then any listed model.
-    """
-    base_url = base_url or os.environ.get("OLLAMA_BASE_URL") or "http://localhost:11434"
-    preferred = (preferred or os.environ.get("OLLAMA_CHAT_MODEL") or "mistral:7b").strip()
-    available = _get_available_ollama_models(base_url)
-    if not available:
-        logger.warning("No models listed at Ollama %s; ensure Ollama is running and models are pulled.", base_url)
-        return None
-    # Ollama tags can return "name" or "name:tag"; match by prefix or exact.
-    def name_matches(a: str, b: str) -> bool:
-        return a == b or a.startswith(b + ":") or b.startswith(a + ":")
-    if any(name_matches(m, preferred) for m in available):
-        return preferred
-    for fallback in OLLAMA_CHAT_FALLBACKS:
-        if any(name_matches(m, fallback) for m in available):
-            logger.info("Using fallback Ollama chat model: %s (preferred %s not available)", fallback, preferred)
-            return fallback
-    # Prefer names that don't look like embed-only models
-    chat_like = [m for m in available if "embed" not in m.lower()]
-    first = (chat_like[0] if chat_like else available[0])
-    logger.info("Using first available Ollama chat model: %s (preferred %s not in list)", first, preferred)
-    return first
 
 
 def _to_similar_item(row: dict[str, Any]) -> dict[str, Any]:
@@ -315,27 +268,60 @@ def recommender_agent(state: AgentState) -> AgentState:
         if inc_id is not None:
             sources.append(str(inc_id))
 
+    analysis_result: dict[str, Any] = {}
     try:
         ollama_url = os.environ.get("OLLAMA_BASE_URL") or "http://localhost:11434"
-        model = get_working_chat_model(base_url=ollama_url)
+        model = resolve_reasoning_model(base_url=ollama_url)
         if not model:
             raise RuntimeError(
-                "No Ollama chat model available. Pull a model, e.g.: ollama pull qwen2.5:0.5b"
+                "No Ollama reasoning model available. Pull a model, e.g.: ollama pull mistral:7b"
             )
+        logger.info("recommender_agent using reasoning model: %s", model)
         llm = ChatOllama(model=model, base_url=ollama_url, timeout=60)
-        prompt = _build_prompt(state)
-        response = llm.invoke(prompt)
+        json_prompt = (
+            _build_prompt(state)
+            + "\n\nRespond with ONLY valid JSON matching this schema:\n"
+            '{"confidence_score": 0.0-1.0, "severity": "low|medium|high|critical", '
+            '"root_cause_hypothesis": "...", "affected_services": ["..."], '
+            '"recommended_actions": ["..."], "runbook_steps": ["..."]}'
+        )
+        response = llm.invoke(json_prompt)
         content = getattr(response, "content", None) or str(response)
-        parsed = _parse_llm_response(content)
-        root_cause = parsed.get("root_cause", "")
-        recommendation = parsed.get("recommendation", "")
-        prevention_advice = parsed.get("prevention_advice", "")
-        confidence = parsed.get("confidence", 0.0)
+        try:
+            raw_json = json.loads(content.strip())
+            validated = AnalysisResult.model_validate(raw_json)
+            analysis_result = validated.model_dump()
+            root_cause = validated.root_cause_hypothesis
+            recommendation = "\n".join(validated.recommended_actions)
+            prevention_advice = "\n".join(validated.runbook_steps)
+            confidence = validated.confidence_score
+        except Exception:
+            correction = (
+                "Your previous response was not valid JSON. "
+                "Return ONLY a JSON object with keys: confidence_score, severity, "
+                "root_cause_hypothesis, affected_services, recommended_actions, runbook_steps."
+            )
+            retry = llm.invoke(f"{json_prompt}\n\n{correction}\n\nInvalid response was:\n{content[:500]}")
+            retry_content = getattr(retry, "content", None) or str(retry)
+            raw_json = json.loads(retry_content.strip())
+            validated = AnalysisResult.model_validate(raw_json)
+            analysis_result = validated.model_dump()
+            root_cause = validated.root_cause_hypothesis
+            recommendation = "\n".join(validated.recommended_actions)
+            prevention_advice = "\n".join(validated.runbook_steps)
+            confidence = validated.confidence_score
     except Exception as e:
         logger.exception("recommender_agent failed: %s", e)
         errors.append(f"Recommender: {e!s}")
-        recommendation = "Analysis unavailable (LLM error or timeout)."
-        root_cause = "Could not determine (pipeline error)."
+        try:
+            parsed = _parse_llm_response(str(e))
+            root_cause = parsed.get("root_cause", "")
+            recommendation = parsed.get("recommendation", "")
+            prevention_advice = parsed.get("prevention_advice", "")
+            confidence = parsed.get("confidence", 0.0)
+        except Exception:
+            recommendation = "Analysis unavailable (LLM error or timeout)."
+            root_cause = "Could not determine (pipeline error)."
 
     state["root_cause"] = root_cause
     state["recommendation"] = recommendation
@@ -343,6 +329,7 @@ def recommender_agent(state: AgentState) -> AgentState:
     state["confidence"] = confidence
     state["sources"] = sources
     state["errors"] = errors
+    state["analysis_result"] = analysis_result
     return state
 
 
@@ -408,8 +395,9 @@ Write the runbook in this EXACT Markdown format:
 """
     try:
         ollama_url = os.environ.get("OLLAMA_BASE_URL") or "http://localhost:11434"
-        model = get_working_chat_model(base_url=ollama_url)
+        model = resolve_reasoning_model(base_url=ollama_url)
         if model:
+            logger.info("runbook_agent using reasoning model: %s", model)
             llm = ChatOllama(model=model, base_url=ollama_url, timeout=90)
             response = llm.invoke(prompt)
             runbook_md = getattr(response, "content", None) or str(response) or ""

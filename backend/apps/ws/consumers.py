@@ -18,10 +18,26 @@ class IncidentConsumer(AsyncWebsocketConsumer):
 
     async def incident_alert(self, event: dict) -> None:
         """Called by Celery tasks via channel layer to push to all connected clients."""
-        await self.send(text_data=json.dumps({
-            "type": "new_incident",
-            "data": event["incident"],
-        }))
+        event_type = event.get("event_type", "new_incident")
+        await self.send(
+            text_data=json.dumps(
+                {
+                    "type": event_type,
+                    "data": event["incident"],
+                }
+            )
+        )
+
+    async def incident_updated(self, event: dict) -> None:
+        """Called when a deduplicated incident occurrence_count increases."""
+        await self.send(
+            text_data=json.dumps(
+                {
+                    "type": "incident_updated",
+                    "data": event["incident"],
+                }
+            )
+        )
 
     async def analysis_complete(self, event: dict) -> None:
         """Called when LangGraph analysis finishes."""

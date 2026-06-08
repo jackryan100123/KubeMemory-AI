@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
+import { buildWebSocketUrl } from '../api/wsUrl'
 
 /**
  * WebSocket hook for the cluster chat assistant.
@@ -29,23 +30,7 @@ export function useChatWebSocket(options = {}) {
   messagesRef.current = messages
 
   const connect = useCallback(() => {
-    const raw =
-      import.meta.env.VITE_WS_URL ||
-      (import.meta.env.DEV ? 'ws://localhost:8000' : null) ||
-      (typeof window !== 'undefined'
-        ? `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`
-        : 'ws://localhost:8000')
-    // Full URL (ws://host) or relative path (/ws): build ws(s)://currentHost/ws/chat/
-    let wsUrl
-    if (typeof raw === 'string' && (raw.startsWith('ws://') || raw.startsWith('wss://'))) {
-      wsUrl = raw.replace(/\/ws\/?$/, '') + (raw.endsWith('/') ? '' : '/') + 'ws/chat/'
-    } else {
-      const base = typeof window !== 'undefined'
-        ? (window.location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + window.location.host
-        : 'ws://localhost:8000'
-      const path = (typeof raw === 'string' ? raw : '/ws').replace(/\/+$/, '') + '/chat/'
-      wsUrl = base + (path.startsWith('/') ? path : '/' + path)
-    }
+    const wsUrl = buildWebSocketUrl('chat')
     wsRef.current = new WebSocket(wsUrl)
 
     wsRef.current.onopen = () => {

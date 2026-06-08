@@ -33,8 +33,8 @@ function mergeAndDedupe(polled, live) {
   polled.forEach((i) => byId.set(i.id, i))
   live.forEach((i) => byId.set(i.id, { ...i, ...byId.get(i.id) }))
   return [...byId.values()].sort((a, b) => {
-    const ta = new Date(a.occurred_at || a.created_at || 0).getTime()
-    const tb = new Date(b.occurred_at || b.created_at || 0).getTime()
+    const ta = new Date(a.last_seen_at || a.occurred_at || a.created_at || 0).getTime()
+    const tb = new Date(b.last_seen_at || b.occurred_at || b.created_at || 0).getTime()
     return tb - ta
   })
 }
@@ -250,8 +250,8 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Section 4 — Mini Activity Chart */}
-        <div className="rounded-lg border border-border bg-surface p-4">
+        {/* Section 4 — Mini Activity Chart (hidden on very small screens) */}
+        <div className="hidden sm:block rounded-lg border border-border bg-surface p-4">
           <h3 className="font-mono font-semibold text-white mb-4">7-Day Incident Frequency</h3>
           <div className="h-48">
             <ResponsiveContainer width="100%" height="100%">

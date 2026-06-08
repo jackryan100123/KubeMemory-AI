@@ -16,7 +16,26 @@ you historically-aware troubleshooting that gets smarter over time.
 
 ## Architecture
 
-[link to architecture diagram]
+```
+┌─────────────┐     events      ┌──────────────┐     Celery ingest    ┌─────────────┐
+│  Kubernetes │ ──────────────► │ K8s Watcher  │ ──────────────────► │ Django API  │
+│   Cluster   │                 │  (run_watcher)│                     │ + Postgres  │
+└─────────────┘                 └──────────────┘                     └──────┬──────┘
+                                                                            │
+                    ┌───────────────────────────────────────────────────────┤
+                    ▼                       ▼                               ▼
+             ┌────────────┐         ┌────────────┐                  ┌──────────────┐
+             │  ChromaDB  │         │   Neo4j    │                  │ Celery (llm) │
+             │  (vectors) │         │  (graph)   │                  │ LangGraph    │
+             └────────────┘         └────────────┘                  └──────┬───────┘
+                                                                            │
+                    ┌───────────────────────────────────────────────────────┘
+                    ▼
+             ┌────────────┐    WebSocket     ┌─────────────┐
+             │   Ollama   │ ◄─────────────── │ React UI    │
+             │  (local)   │                  │ (Vite/nginx)│
+             └────────────┘                  └─────────────┘
+```
 
 - **K8s Watcher** → streams cluster events in real-time
 - **ChromaDB** → vector semantic search over past incidents
@@ -82,12 +101,20 @@ Then ask Claude: *"What caused the payment service to crash last night?"*
 Copy `.env.example` to `.env` and fill in values.
 Never commit `.env` — it's in `.gitignore`.
 
-## Security Notes
+## Security
 
-- All secrets via environment variables — no hardcoded credentials
-- Non-root Docker containers
-- K8s RBAC: watcher has read-only access (pods, events, namespaces only)
-- No cloud API calls — everything runs locally
+- **JWT authentication** — all `/api/*` routes require a Bearer token except `/api/health/` and `/api/token/`. Sign in at `/login` (dev user: set `DEV_ADMIN_USERNAME` / `DEV_ADMIN_PASSWORD` in `.env`, then `python manage.py ensure_dev_admin`).
+- **Encrypted kubeconfig** — pasted cluster credentials are stored with `FERNET_KEY` (generate: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`). Set `FERNET_KEY` in `.env` before migrations.
+- **RBAC roles** — `viewer`, `operator`, `admin` on `UserProfile`; operators required for watcher connect/start; viewers cannot mutate production clusters.
+- All other secrets via environment variables — never commit `.env`
+- Non-root Docker containers; K8s watcher uses read-only RBAC
+
+## Monitoring
+
+- **Watcher heartbeat** — Redis key `watcher:heartbeat:<cluster_id>` (45s TTL); `/status` shows green when heartbeat is under 45 seconds old
+- **Task logs** — failed Celery tasks at `/api/monitoring/task-logs/` and on the Status page
+- **Ollama readiness** — `ollama:ready` in Redis; exposed on `/api/status/` as `ollama_ready`
+- **Notifications** — configure Slack/webhook sinks under Settings → Notifications
 
 ## More Documentation
 

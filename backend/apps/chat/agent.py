@@ -7,7 +7,7 @@ import logging
 import os
 from typing import Any, Callable
 
-from apps.agents.agents import get_working_chat_model
+from apps.agents.ollama_models import get_working_chat_model
 from apps.mcp_server.tools import execute_tool, get_ollama_tools
 
 logger = logging.getLogger(__name__)

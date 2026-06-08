@@ -59,6 +59,8 @@ class IncidentListSerializer(serializers.ModelSerializer):
             "occurred_at",
             "resolved_at",
             "estimated_waste_usd",
+            "occurrence_count",
+            "last_seen_at",
             "created_at",
         ]
 
@@ -67,6 +69,7 @@ class IncidentDetailSerializer(serializers.ModelSerializer):
     """Detail serializer for Incident with nested fixes."""
 
     fixes = FixSerializer(many=True, read_only=True)
+    first_seen_at = serializers.DateTimeField(source="occurred_at", read_only=True)
     cluster_id = serializers.IntegerField(source="cluster.id", read_only=True)
     cluster_name = serializers.CharField(source="cluster.name", read_only=True)
     cluster_environment = serializers.CharField(
@@ -90,6 +93,10 @@ class IncidentDetailSerializer(serializers.ModelSerializer):
             "description",
             "raw_logs",
             "ai_analysis",
+            "analysis_result",
+            "occurrence_count",
+            "last_seen_at",
+            "first_seen_at",
             "chroma_id",
             "neo4j_id",
             "occurred_at",

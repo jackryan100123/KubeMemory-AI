@@ -57,7 +57,9 @@ def analyze_incident(incident_id: int) -> dict[str, Any]:
 
     # Save analysis back to Postgres
     incident.ai_analysis = final_state.get("recommendation", "")
-    incident.save(update_fields=["ai_analysis"])
+    analysis_result = final_state.get("analysis_result") or {}
+    incident.analysis_result = analysis_result
+    incident.save(update_fields=["ai_analysis", "analysis_result"])
 
     return final_state
 

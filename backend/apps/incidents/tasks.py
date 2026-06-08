@@ -1,6 +1,6 @@
 """Celery tasks for incident ingestion and corrective RAG."""
 import logging
-from datetime import timedelta
+import os
 from typing import Any
 
 from asgiref.sync import async_to_sync
@@ -9,6 +9,7 @@ from channels.layers import get_channel_layer
 from django.utils import timezone
 
 from apps.clusters.models import ClusterConnection
+from .fingerprint import compute_incident_fingerprint
 from .models import Incident
 from .serializers import IncidentListSerializer
 
@@ -29,22 +30,29 @@ def estimate_waste_usd(incident_data: dict) -> float:
     return round(engineer_cost + compute_waste, 2)
 
 
-@shared_task(bind=True, max_retries=3, default_retry_delay=30)
+def _broadcast_incident(event_type: str, incident: Incident) -> None:
+    channel_layer = get_channel_layer()
+    if not channel_layer:
+        return
+    channel_type = "incident.alert" if event_type == "new_incident" else "incident.updated"
+    payload = {
+        "type": channel_type,
+        "incident": IncidentListSerializer(incident).data,
+    }
+    async_to_sync(channel_layer.group_send)("incidents", payload)
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=30, queue="ingest")
 def ingest_incident_task(self, incident_data: dict) -> dict[str, Any]:
     """
-    Full incident ingestion pipeline:
-    1. Save Incident to Postgres (avoid duplicates)
-    2. Embed in ChromaDB
-    3. Write to Neo4j graph
-    4. Update Postgres with memory IDs
-    5. Push to WebSocket clients
-    Returns incident ID and status.
+    Full incident ingestion pipeline with fingerprint deduplication.
     """
     try:
         from django.utils.dateparse import parse_datetime
 
         from apps.memory.graph_builder import KubeGraphBuilder
         from apps.memory.vector_store import IncidentVectorStore
+        from apps.monitoring.tasks import send_notification
 
         occurred_at = incident_data.get("occurred_at")
         if isinstance(occurred_at, str):
@@ -61,73 +69,65 @@ def ingest_incident_task(self, incident_data: dict) -> dict[str, Any]:
 
         cluster_obj: ClusterConnection | None = None
         cluster_id_val = incident_data.get("cluster_id")
+        cluster_id_int: int | None = None
         if cluster_id_val is not None:
             try:
-                cluster_obj = ClusterConnection.objects.filter(id=int(cluster_id_val)).first()
+                cluster_id_int = int(cluster_id_val)
+                cluster_obj = ClusterConnection.objects.filter(id=cluster_id_int).first()
             except (TypeError, ValueError):
                 cluster_obj = None
 
-        defaults = {
-            "node_name": incident_data.get("node_name", ""),
-            "service_name": incident_data.get("service_name", ""),
-            "severity": severity,
-            "status": Incident.Status.OPEN,
-            "description": incident_data.get("description", ""),
-            "raw_logs": incident_data.get("raw_logs", ""),
-            "estimated_waste_usd": estimate_waste_usd(incident_data),
-        }
-
         pod_name = incident_data.get("pod_name", "") or ""
         namespace = incident_data.get("namespace", "") or ""
-
-        # Basic deduplication window: if a matching incident already exists for this
-        # pod/namespace/type/cluster in the last 5 minutes, treat as duplicate.
-        window_start = occurred_at - timedelta(minutes=5)
-        existing_qs = Incident.objects.filter(
-            pod_name=pod_name,
-            namespace=namespace,
-            incident_type=incident_type,
-            occurred_at__gte=window_start,
+        fp = compute_incident_fingerprint(
+            namespace, pod_name, incident_type, occurred_at, cluster_id_int
         )
-        if cluster_obj is not None:
-            existing_qs = existing_qs.filter(cluster=cluster_obj)
-        existing = existing_qs.order_by("-occurred_at").first()
-        if existing:
-            return {"status": "duplicate", "incident_id": existing.id}
 
+        existing = Incident.objects.filter(fingerprint=fp).first()
+        if existing:
+            existing.occurrence_count += 1
+            existing.last_seen_at = occurred_at
+            existing.save(update_fields=["occurrence_count", "last_seen_at", "updated_at"])
+            _broadcast_incident("incident_updated", existing)
+            return {
+                "status": "duplicate",
+                "incident_id": existing.id,
+                "occurrence_count": existing.occurrence_count,
+            }
+
+        embed_version = os.environ.get("OLLAMA_EMBED_MODEL", "nomic-embed-text")
         incident = Incident.objects.create(
             cluster=cluster_obj,
             pod_name=pod_name,
             namespace=namespace,
             incident_type=incident_type,
             occurred_at=occurred_at,
-            **defaults,
+            last_seen_at=occurred_at,
+            fingerprint=fp,
+            occurrence_count=1,
+            embedding_model_version=embed_version,
+            node_name=incident_data.get("node_name", ""),
+            service_name=incident_data.get("service_name", ""),
+            severity=severity,
+            status=Incident.Status.OPEN,
+            description=incident_data.get("description", ""),
+            raw_logs=incident_data.get("raw_logs", ""),
+            estimated_waste_usd=estimate_waste_usd(incident_data),
         )
 
-        # Step 2: Embed in ChromaDB
         vector_store = IncidentVectorStore()
         chroma_id = vector_store.embed_incident(incident)
 
-        # Step 3: Write to Neo4j
         graph = KubeGraphBuilder()
         neo4j_id = graph.ingest_incident(incident)
         graph.close()
 
-        # Step 4: Update Postgres with memory IDs
         incident.chroma_id = chroma_id
         incident.neo4j_id = neo4j_id
         incident.save(update_fields=["chroma_id", "neo4j_id"])
 
-        # Step 5: Push to WebSocket clients
-        channel_layer = get_channel_layer()
-        if channel_layer:
-            async_to_sync(channel_layer.group_send)(
-                "incidents",
-                {
-                    "type": "incident.alert",
-                    "incident": IncidentListSerializer(incident).data,
-                },
-            )
+        _broadcast_incident("new_incident", incident)
+        send_notification.delay(incident.id)
 
         logger.info(
             "Ingested incident id=%s pod=%s namespace=%s chroma=%s neo4j=%s",
@@ -145,13 +145,9 @@ def ingest_incident_task(self, incident_data: dict) -> dict[str, Any]:
         raise self.retry(exc=exc)
 
 
-@shared_task(bind=True, max_retries=2, default_retry_delay=60)
+@shared_task(bind=True, max_retries=2, default_retry_delay=60, queue="llm")
 def run_ai_analysis_task(self, incident_id: int) -> dict[str, Any]:
-    """
-    Runs the full LangGraph 3-agent pipeline for an incident.
-    Called after ingest_incident_task completes.
-    Pushes analysis result to WebSocket clients.
-    """
+    """Runs the LangGraph pipeline; pushes analysis to WebSocket clients."""
     try:
         from apps.agents.pipeline import analyze_incident
 
@@ -168,6 +164,7 @@ def run_ai_analysis_task(self, incident_id: int) -> dict[str, Any]:
                     "root_cause": final_state.get("root_cause", ""),
                     "confidence": final_state.get("confidence", 0.0),
                     "sources": final_state.get("sources", []),
+                    "analysis_result": final_state.get("analysis_result", {}),
                 },
             )
 
@@ -181,13 +178,9 @@ def run_ai_analysis_task(self, incident_id: int) -> dict[str, Any]:
         raise self.retry(exc=exc)
 
 
-@shared_task(bind=True, max_retries=2, default_retry_delay=15)
+@shared_task(bind=True, max_retries=2, default_retry_delay=15, queue="ingest")
 def update_corrective_rag_task(self, fix_id: int) -> None:
-    """
-    Update corrective RAG when a fix is submitted.
-    If fix.correction_of is set: add correction document in ChromaDB.
-    If fix.worked is True: resolve incident in Neo4j.
-    """
+    """Update corrective RAG when a fix is submitted."""
     try:
         from apps.incidents.models import Fix
         from apps.memory.graph_builder import KubeGraphBuilder

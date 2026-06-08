@@ -1,6 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
-import { useWebSocket } from './hooks/useWebSocket'
+import RequireAuth from './components/auth/RequireAuth'
 import AppShell from './components/layout/AppShell'
+import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import IncidentsList from './pages/IncidentsList'
 import IncidentDetail from './pages/IncidentDetail'
@@ -13,10 +14,17 @@ import Status from './pages/Status'
 import Settings from './pages/Settings'
 
 function AppContent() {
-  useWebSocket()
   return (
     <Routes>
-      <Route path="/" element={<AppShell />}>
+      <Route path="/login" element={<Login />} />
+      <Route
+        path="/"
+        element={
+          <RequireAuth>
+            <AppShell />
+          </RequireAuth>
+        }
+      >
         <Route index element={<Dashboard />} />
         <Route path="incidents" element={<IncidentsList />} />
         <Route path="incidents/:id" element={<IncidentDetail />} />
@@ -28,8 +36,8 @@ function AppContent() {
         <Route path="connect" element={<ClusterConnect />} />
         <Route path="status" element={<Status />} />
         <Route path="settings" element={<Settings />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   )
 }

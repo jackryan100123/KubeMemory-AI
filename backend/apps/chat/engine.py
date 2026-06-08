@@ -62,8 +62,11 @@ class ChatEngine:
 
     def __init__(self, session: ChatSession) -> None:
         self.session = session
+        from apps.agents.llm_config import resolve_fast_model
+
+        fast_model = resolve_fast_model() or os.environ.get("OLLAMA_FAST_MODEL", "qwen2.5:0.5b")
         self.llm = ChatOllama(
-            model=os.environ.get("OLLAMA_CHAT_MODEL", "mistral:7b"),
+            model=fast_model,
             base_url=os.environ.get("OLLAMA_BASE_URL", "http://ollama:11434"),
             temperature=0.1,
         )

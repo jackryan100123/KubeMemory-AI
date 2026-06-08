@@ -7,12 +7,26 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 
+from config.permissions import CanMutateClusterEnvironment, IsClusterOperator
+
 from .k8s_client import test_connection
 from .models import ClusterConnection
 from .serializers import ClusterConnectionSerializer
 from .watcher_manager import write_cluster_kubeconfig, start_watcher, stop_watcher, watcher_status
 
 logger = logging.getLogger(__name__)
+
+_OPERATOR_ACTIONS = frozenset(
+    {
+        "create",
+        "partial_update",
+        "destroy",
+        "test",
+        "connect",
+        "start_watcher_action",
+        "watcher_stop",
+    }
+)
 
 
 class ClusterConnectionViewSet(ModelViewSet):
@@ -21,6 +35,13 @@ class ClusterConnectionViewSet(ModelViewSet):
     queryset = ClusterConnection.objects.all()
     serializer_class = ClusterConnectionSerializer
     http_method_names = ["get", "post", "patch", "delete", "head", "options"]
+    permission_classes = [CanMutateClusterEnvironment]
+
+    def get_permissions(self):
+        """Watcher and connect endpoints require operator or admin role."""
+        if self.action in _OPERATOR_ACTIONS:
+            return [IsClusterOperator(), CanMutateClusterEnvironment()]
+        return super().get_permissions()
 
     def create(self, request, *args, **kwargs) -> Response:
         """Create cluster; if kubeconfig_content is provided, save to file and set kubeconfig_path."""
@@ -41,6 +62,8 @@ class ClusterConnectionViewSet(ModelViewSet):
         cluster = serializer.instance
         if content:
             try:
+                cluster.kubeconfig_content = content
+                cluster.save(update_fields=["kubeconfig_content"])
                 path = write_cluster_kubeconfig(
                     cluster.id,
                     content,
@@ -147,13 +170,13 @@ class ClusterConnectionViewSet(ModelViewSet):
                 "Create pods, deployments, or services",
                 "Access secrets, ConfigMaps, or credentials",
                 "Require cluster-admin or write permissions",
-                "Store your kubeconfig content in our database (only file path or file on disk)",
+                "Store kubeconfig content only in encrypted form in our database (never plaintext)",
             ],
             "we_do": [
                 "List and watch Events, Pods, Namespaces (read-only)",
                 "Read pod logs when an incident is detected (for context only)",
                 "Store incident metadata (pod name, namespace, type, description) and embeddings in our database",
-                "Use your kubeconfig only to connect to the API server; it is stored in a file on the server (or you paste it once and we write to a file). We never log or expose kubeconfig content.",
+                "Use your kubeconfig only to connect to the API server; pasted content is encrypted at rest and written to a runtime file for the watcher. We never log or expose kubeconfig content.",
             ],
             "recommendations": [
                 "Use a dedicated service account with minimal read-only RBAC (list/watch events, get/list pods and namespaces, read pod logs).",

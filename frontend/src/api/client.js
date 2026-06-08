@@ -1,7 +1,6 @@
 import axios from 'axios'
+import useUiStore from '../store/uiStore'
 
-// When built in Docker, .env is not available — use same origin so nginx can proxy /api to backend.
-// In Vite dev (npm run dev), same-origin is the dev server (5173); prefer explicit backend (8000) if set or in dev.
 const apiBase =
   import.meta.env.VITE_API_URL ||
   (import.meta.env.DEV ? 'http://localhost:8000/api' : null) ||
@@ -13,10 +12,18 @@ const client = axios.create({
   timeout: 30000,
 })
 
-// Request interceptor — add auth token when implemented
-client.interceptors.request.use((config) => config)
+client.interceptors.request.use((config) => {
+  const url = config.url || ''
+  if (url.includes('/token/')) {
+    return config
+  }
+  const token = useUiStore.getState().getAccessToken?.() || useUiStore.getState().accessToken
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`
+  }
+  return config
+})
 
-// Response interceptor — global error handling; always log a clear message (never "undefined")
 client.interceptors.response.use(
   (response) => response,
   (error) => {
@@ -29,6 +36,10 @@ client.interceptors.response.use(
           ? data
           : error.message || `Request failed${status ? ` (${status})` : ''}`
     console.error('API Error:', msg, status ? `[${status}]` : '')
+    if (status === 401 && typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
+      useUiStore.getState().clearAuth()
+      window.location.href = '/login'
+    }
     return Promise.reject(error)
   }
 )

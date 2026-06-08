@@ -85,6 +85,23 @@ class IncidentVectorStore:
         )
         return doc_id
 
+    def delete_incident(self, incident: Incident) -> bool:
+        """Remove Chroma documents linked to this incident."""
+        try:
+            if incident.chroma_id:
+                self._collection.delete(ids=[incident.chroma_id])
+                return True
+            result = self._collection.get(
+                where={"incident_id": str(incident.id)},
+                include=[],
+            )
+            if result.get("ids"):
+                self._collection.delete(ids=result["ids"])
+                return True
+        except Exception as exc:
+            logger.warning("delete_incident failed for id=%s: %s", incident.id, exc)
+        return False
+
     def search_similar(
         self,
         query: str,

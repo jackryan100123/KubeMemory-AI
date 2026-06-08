@@ -181,11 +181,34 @@ def write_cluster_kubeconfig(
     return path
 
 
+def materialize_cluster_kubeconfig_file(cluster_id: int) -> bool:
+    """Write kubeconfig file from encrypted DB field if the on-disk file is missing."""
+    src = get_cluster_kubeconfig_path(cluster_id)
+    if src.exists():
+        return True
+    from apps.clusters.models import ClusterConnection
+
+    try:
+        cluster = ClusterConnection.objects.get(pk=cluster_id)
+    except ClusterConnection.DoesNotExist:
+        return False
+    content = (cluster.kubeconfig_content or "").strip()
+    if not content:
+        return False
+    _ensure_kubeconfigs_dir()
+    src.write_text(content, encoding="utf-8")
+    logger.info("Materialized kubeconfig file for cluster %s", cluster_id)
+    return True
+
+
 def activate_cluster_config(cluster_id: int, namespaces: list[str]) -> bool:
     """
     Copy the cluster's kubeconfig to the writable active path and return True if the file existed.
     Does not start the watcher; call start_watcher after this.
     """
+    if not materialize_cluster_kubeconfig_file(cluster_id):
+        logger.warning("Cluster %s kubeconfig not found on disk or in DB", cluster_id)
+        return False
     src = get_cluster_kubeconfig_path(cluster_id)
     if not src.exists():
         logger.warning("Cluster %s kubeconfig not found at %s", cluster_id, src)

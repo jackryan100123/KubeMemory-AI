@@ -1,6 +1,7 @@
 """
 Django base settings for KubeMemory. Loads from .env via django-environ.
 """
+from datetime import timedelta
 from pathlib import Path
 
 import environ
@@ -22,6 +23,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "rest_framework",
+    "rest_framework_simplejwt",
     "corsheaders",
     "channels",
     "django_extensions",
@@ -32,8 +34,13 @@ INSTALLED_APPS = [
     "apps.mcp_server",
     "apps.chat",
     "apps.clusters",
+    "apps.accounts",
+    "apps.monitoring",
     "apps.ws",
 ]
+
+_fernet_key = env("FERNET_KEY", default="")
+FERNET_KEYS = [_fernet_key] if _fernet_key else []
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
@@ -78,6 +85,33 @@ CHANNEL_LAYERS = {
 CELERY_BROKER_URL = env("CELERY_BROKER_URL", default="redis://localhost:6379/1")
 CELERY_RESULT_BACKEND = env("CELERY_RESULT_BACKEND", default="redis://localhost:6379/2")
 
+CELERY_TASK_ROUTES = {
+    "apps.incidents.tasks.ingest_incident_task": {"queue": "ingest"},
+    "apps.incidents.tasks.update_corrective_rag_task": {"queue": "ingest"},
+    "apps.incidents.tasks.run_ai_analysis_task": {"queue": "llm"},
+    "apps.monitoring.tasks.check_watcher_health": {"queue": "ingest"},
+    "apps.monitoring.tasks.prune_old_vectors": {"queue": "ingest"},
+    "apps.monitoring.tasks.backup_databases": {"queue": "ingest"},
+    "apps.monitoring.tasks.send_notification": {"queue": "ingest"},
+}
+
+CELERY_BEAT_SCHEDULE = {
+    "check-watcher-health": {
+        "task": "apps.monitoring.tasks.check_watcher_health",
+        "schedule": 60.0,
+    },
+    "prune-old-vectors": {
+        "task": "apps.monitoring.tasks.prune_old_vectors",
+        "schedule": 86400.0,
+        "options": {"expires": 3600},
+    },
+    "backup-databases": {
+        "task": "apps.monitoring.tasks.backup_databases",
+        "schedule": 86400.0,
+        "options": {"expires": 3600},
+    },
+}
+
 CORS_ALLOWED_ORIGINS = env.list(
     "CORS_ALLOWED_ORIGINS",
     default=["http://localhost:5173", "http://localhost:3000"],
@@ -92,8 +126,23 @@ REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": [
         "rest_framework.renderers.JSONRenderer",
     ],
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework_simplejwt.authentication.JWTAuthentication",
+    ],
+    "DEFAULT_PERMISSION_CLASSES": [
+        "config.permissions.IsAuthenticatedOrPublicPath",
+    ],
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 20,
+}
+
+SIMPLE_JWT = {
+    "ACCESS_TOKEN_LIFETIME": timedelta(
+        minutes=env.int("JWT_ACCESS_TOKEN_MINUTES", default=60)
+    ),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=env.int("JWT_REFRESH_TOKEN_DAYS", default=7)),
+    "ROTATE_REFRESH_TOKENS": False,
+    "AUTH_HEADER_TYPES": ("Bearer",),
 }
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"

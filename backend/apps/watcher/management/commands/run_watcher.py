@@ -24,6 +24,7 @@ from apps.clusters.watcher_manager import (
     _remove_watcher_pid_file,
     _write_watcher_pid_file,
 )
+from apps.watcher.heartbeat import start_heartbeat_thread, write_heartbeat
 from apps.incidents.tasks import ingest_incident_task
 
 logger = logging.getLogger(__name__)
@@ -170,6 +171,8 @@ class Command(BaseCommand):
         cluster_id = int(cluster_id_raw) if cluster_id_raw else None
         self._cluster_id = cluster_id
         _write_watcher_pid_file(os.getpid(), cluster_id)
+        write_heartbeat(cluster_id)
+        start_heartbeat_thread(cluster_id, lambda: self._shutdown)
 
         while not self._shutdown:
             for namespace in namespaces:

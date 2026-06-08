@@ -405,3 +405,18 @@ class KubeGraphBuilder:
             }
             for r in rows
         ]
+
+    def prune_stale_incidents(self, cutoff) -> int:
+        """Delete Incident nodes older than cutoff with no recent edge activity."""
+        with self._driver.session() as session:
+            result = session.run(
+                """
+                MATCH (i:Incident)
+                WHERE i.timestamp < datetime($cutoff)
+                DETACH DELETE i
+                RETURN count(i) AS removed
+                """,
+                cutoff=cutoff.isoformat(),
+            )
+            record = result.single()
+        return int(record["removed"]) if record else 0
